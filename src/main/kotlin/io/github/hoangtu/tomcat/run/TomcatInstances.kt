@@ -31,6 +31,7 @@ class RunningTomcat(
     val deployments: List<ResolvedDeployment>,
     val processHandler: ProcessHandler,
     val isDebug: Boolean,
+    val output: TomcatServerOutput? = null,
     val executorId: String = if (isDebug) com.intellij.execution.executors.DefaultDebugExecutor.EXECUTOR_ID
     else com.intellij.execution.executors.DefaultRunExecutor.EXECUTOR_ID,
 ) {
@@ -45,8 +46,22 @@ class RunningTomcat(
 
 /** Keeps track of running Tomcat instances and implements the "Update application" actions. */
 @Service(Service.Level.PROJECT)
-class TomcatInstances(private val project: Project) {
+class TomcatInstances(private val project: Project) : com.intellij.openapi.Disposable {
     private val instances = CopyOnWriteArrayList<RunningTomcat>()
+    /** Output of the last run of each configuration (kept after the server stops, replaced by the next run). */
+    private val lastOutputs = java.util.concurrent.ConcurrentHashMap<String, TomcatServerOutput>()
+
+    override fun dispose() {}
+
+    fun lastOutput(configuration: TomcatRunConfiguration): TomcatServerOutput? = lastOutputs[configuration.name]
+
+    /** Called when a new run starts: the previous console and log tabs are discarded ("reset logs on every run"). */
+    fun replaceOutput(configuration: TomcatRunConfiguration, output: TomcatServerOutput) {
+        com.intellij.openapi.util.Disposer.register(this, output)
+        lastOutputs.put(configuration.name, output)?.let { old ->
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater { com.intellij.openapi.util.Disposer.dispose(old) }
+        }
+    }
 
     val running: List<RunningTomcat> get() = instances.filter { !it.processHandler.isProcessTerminated }
 

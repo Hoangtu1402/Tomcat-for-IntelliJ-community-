@@ -50,6 +50,37 @@ object TomcatCatalinaBase {
         return Path.of(PathManager.getSystemPath(), "tomcat-community", dirName)
     }
 
+    /** Where Tomcat writes catalina.*.log, localhost.*.log and access logs. */
+    fun logDirectoryFor(configuration: TomcatRunConfiguration): Path {
+        val custom = configuration.logDirectory.trim()
+        if (custom.isEmpty()) return directoryFor(configuration).resolve("logs")
+        val path = Path.of(FileUtil.toSystemDependentName(custom))
+        if (path.isAbsolute) return path
+        val projectDir = configuration.project.basePath ?: return path.toAbsolutePath()
+        return Path.of(projectDir).resolve(path).normalize()
+    }
+
+    private val TOMCAT_LOG_PREFIXES = listOf("catalina.", "localhost.", "localhost_access_log", "manager.", "host-manager.", "admin.")
+
+    /** Removes the log files of the previous run, so every run starts with empty logs. */
+    fun clearLogs(configuration: TomcatRunConfiguration) {
+        val dir = logDirectoryFor(configuration)
+        if (!dir.isDirectory()) return
+        val ownDir = configuration.logDirectory.isBlank()
+        for (file in dir.listDirectoryEntries()) {
+            val name = file.fileName.toString()
+            // in a user-chosen directory only touch files Tomcat creates
+            if (Files.isRegularFile(file) && (ownDir || TOMCAT_LOG_PREFIXES.any(name::startsWith))) {
+                try {
+                    Files.delete(file)
+                } catch (_: Exception) {
+                    // a file may still be locked (Windows); truncate it instead
+                    try { Files.newOutputStream(file).close() } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
     class Prepared(val base: Path, val hostName: String, val engineName: String) {
         fun contextFile(contextPath: String): Path =
             base.resolve("conf").resolve(engineName).resolve(hostName).resolve(TomcatContexts.descriptorName(contextPath) + ".xml")
@@ -64,17 +95,21 @@ object TomcatCatalinaBase {
             Files.createDirectories(conf)
             copyDirectory(installation.home.resolve("conf"), conf)
             for (dir in listOf("logs", "temp", "work", "webapps")) Files.createDirectories(base.resolve(dir))
+            val logDir = logDirectoryFor(configuration)
+            Files.createDirectories(logDir)
+            if (configuration.clearLogsOnStart) clearLogs(configuration)
+            patchLoggingProperties(conf.resolve("logging.properties"), logDir)
 
             val serverXml = conf.resolve("server.xml")
             val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(serverXml.toFile())
-            val (engineName, hostName) = patchServerXml(document, configuration, installation)
+            val (engineName, hostName) = patchServerXml(document, configuration, installation, logDir)
             serverXml.writeText(serialize(document))
 
             val prepared = Prepared(base, hostName, engineName)
             val contextDir = conf.resolve(engineName).resolve(hostName)
             Files.createDirectories(contextDir)
             for (deployment in deployments) {
-                prepared.contextFile(deployment.contextPath).writeText(contextXml(deployment.docBase))
+                prepared.contextFile(deployment.contextPath).writeText(contextXml(deployment.docBase, configuration.preserveSessions))
             }
             return prepared
         } catch (e: ExecutionException) {
@@ -84,9 +119,19 @@ object TomcatCatalinaBase {
         }
     }
 
-    private fun contextXml(docBase: String): String {
+    private fun contextXml(docBase: String, preserveSessions: Boolean): String {
         val escaped = docBase.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;")
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Context docBase=\"$escaped\" reloadable=\"false\"/>\n"
+        // An empty Manager pathname disables session persistence across restarts and redeploys.
+        val manager = if (preserveSessions) "" else "\n  <Manager pathname=\"\"/>"
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Context docBase=\"$escaped\" reloadable=\"false\">$manager\n</Context>\n"
+    }
+
+    /** Points Tomcat's JULI file handlers at [logDir] (default: ${catalina.base}/logs). */
+    private fun patchLoggingProperties(file: Path, logDir: Path) {
+        if (!Files.isRegularFile(file)) return
+        val dir = FileUtil.toSystemIndependentName(logDir.toString())
+        val text = Files.readString(file).replace("\${catalina.base}/logs", dir)
+        file.writeText(text)
     }
 
     private fun copyDirectory(from: Path, to: Path) {
@@ -110,32 +155,48 @@ object TomcatCatalinaBase {
     }
 
     /** Returns (engine name, host name). */
-    private fun patchServerXml(document: Document, configuration: TomcatRunConfiguration, installation: TomcatInstallation): Pair<String, String> {
+    private fun patchServerXml(document: Document, configuration: TomcatRunConfiguration, installation: TomcatInstallation, logDir: Path): Pair<String, String> {
         val server = document.documentElement
         // The server is stopped by the IDE (process termination triggers Tomcat's shutdown hook): no shutdown port needed.
         server.setAttribute("port", "-1")
-        // JmxRemoteLifecycleListener etc. are not used; JMX is configured through system properties.
 
         val service = server.childElements("Service").firstOrNull() ?: throw ExecutionException("server.xml: <Service> element not found")
-        var httpConnectorFound = false
+        var http: Element? = null
+        var https: Element? = null
+        var ajp: Element? = null
         for (connector in service.childElements("Connector")) {
             val protocol = connector.getAttribute("protocol")
             val isAjp = protocol.contains("AJP", ignoreCase = true)
             val isSsl = connector.getAttribute("SSLEnabled").equals("true", ignoreCase = true)
-            if (!httpConnectorFound && !isAjp && !isSsl) {
-                connector.setAttribute("port", configuration.httpPort.toString())
-                httpConnectorFound = true
-            } else {
-                service.removeChild(connector)
+            when {
+                isAjp && ajp == null && configuration.ajpPort != 0 -> ajp = connector
+                isSsl && https == null && configuration.httpsPort != 0 -> https = connector
+                !isAjp && !isSsl && http == null -> http = connector
+                else -> service.removeChild(connector)
             }
         }
-        if (!httpConnectorFound) {
-            val connector = document.createElement("Connector")
-            connector.setAttribute("port", configuration.httpPort.toString())
-            connector.setAttribute("protocol", "HTTP/1.1")
-            connector.setAttribute("connectionTimeout", "20000")
-            val engineElement = service.childElements("Engine").firstOrNull()
-            service.insertBefore(connector, engineElement)
+        val engineElement = service.childElements("Engine").firstOrNull()
+        fun newConnector(protocol: String): Element = document.createElement("Connector").also {
+            it.setAttribute("protocol", protocol)
+            service.insertBefore(it, engineElement)
+        }
+        (http ?: newConnector("HTTP/1.1").also { it.setAttribute("connectionTimeout", "20000") })
+            .setAttribute("port", configuration.httpPort.toString())
+        https?.setAttribute("port", configuration.httpsPort.toString())
+        if (configuration.httpsPort != 0) http?.setAttribute("redirectPort", configuration.httpsPort.toString())
+        if (configuration.ajpPort != 0) {
+            val connector = ajp ?: newConnector("AJP/1.3").also {
+                it.setAttribute("address", "127.0.0.1")
+                if ((installation.majorVersion ?: 9) >= 9) it.setAttribute("secretRequired", "false")
+            }
+            connector.setAttribute("port", configuration.ajpPort.toString())
+        }
+
+        // access logs go to the same directory as the other logs
+        val valves = document.getElementsByTagName("Valve")
+        for (i in 0 until valves.length) {
+            val valve = valves.item(i) as Element
+            if (valve.getAttribute("className").endsWith("AccessLogValve")) valve.setAttribute("directory", logDir.toString())
         }
 
         val engine = service.childElements("Engine").firstOrNull() ?: throw ExecutionException("server.xml: <Engine> element not found")

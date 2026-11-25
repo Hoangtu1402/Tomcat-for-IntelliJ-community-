@@ -71,6 +71,21 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
     var deployTomcatApps: Boolean = false
     var deployments: List<TomcatDeployment> = emptyList()
 
+    /** Ask what to do (and for which application) on "Update" — the "Show dialog" checkbox of Ultimate. */
+    var showUpdateDialog: Boolean = true
+    /** Browser for "After launch" (WebBrowser id); null = system default. */
+    var browserId: String? = null
+    /** 0 = keep the HTTPS connector of server.xml disabled. */
+    var httpsPort: Int = 0
+    /** 0 = no AJP connector. */
+    var ajpPort: Int = 0
+    var preserveSessions: Boolean = false
+
+    /** Delete Tomcat log files (and start a fresh console output file) every time the server is started. */
+    var clearLogsOnStart: Boolean = true
+    /** Directory for Tomcat's own log files (catalina.*.log, localhost.*.log, access logs); empty = CATALINA_BASE/logs. */
+    var logDirectory: String = ""
+
     init {
         addPredefinedLogFile(PredefinedLogFile(LOG_LOCALHOST, true))
         addPredefinedLogFile(PredefinedLogFile(LOG_CATALINA, false))
@@ -81,6 +96,8 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
     override fun getConfigurationEditor(): SettingsEditor<out RunConfiguration> = SettingsEditorGroup<TomcatRunConfiguration>().apply {
         addEditor("Server", TomcatServerSettingsEditor(project))
         addEditor("Deployment", TomcatDeploymentSettingsEditor(project))
+        addEditor("Logs", TomcatLogsSettingsEditor(project))
+        addEditor("Startup/Connection", TomcatStartupSettingsEditor())
     }
 
     override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState = TomcatCommandLineState(environment, this)
@@ -115,6 +132,10 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
         if (httpPort !in 1..65535) throw RuntimeConfigurationError("HTTP port must be between 1 and 65535")
         if (jmxPort !in 1..65535) throw RuntimeConfigurationError("JMX port must be between 1 and 65535")
         if (jmxPort == httpPort) throw RuntimeConfigurationError("HTTP and JMX ports must be different")
+        for ((name, port) in listOf("HTTPS" to httpsPort, "AJP" to ajpPort)) {
+            if (port != 0 && port !in 1..65535) throw RuntimeConfigurationError("$name port must be between 1 and 65535")
+            if (port != 0 && (port == httpPort || port == jmxPort)) throw RuntimeConfigurationError("$name port conflicts with another port")
+        }
         for (deployment in deployments) {
             if (WebArtifacts.find(project, deployment.artifactName) == null) {
                 throw RuntimeConfigurationError("Artifact '${deployment.artifactName}' does not exist")
@@ -130,7 +151,7 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
     })
 
     override fun getOptionsForPredefinedLogFile(file: PredefinedLogFile): LogFileOptions? {
-        val logs = TomcatCatalinaBase.directoryFor(this).resolve("logs").toString()
+        val logs = TomcatCatalinaBase.logDirectoryFor(this).toString()
         return when (file.id) {
             LOG_LOCALHOST -> LogFileOptions("Tomcat Localhost Log", "$logs/localhost.*.log", file.isEnabled, true, false)
             LOG_CATALINA -> LogFileOptions("Tomcat Catalina Log", "$logs/catalina.*.log", file.isEnabled, true, false)
@@ -164,6 +185,13 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
             jmxPort = JDOMExternalizerUtil.readField(own, "JMX_PORT")?.toIntOrNull() ?: 1099
             deployTomcatApps = JDOMExternalizerUtil.readField(own, "DEPLOY_TOMCAT_APPS")?.toBoolean() ?: false
             envs = EnvironmentVariablesData.readExternal(own)
+            showUpdateDialog = JDOMExternalizerUtil.readField(own, "SHOW_UPDATE_DIALOG")?.toBoolean() ?: true
+            browserId = JDOMExternalizerUtil.readField(own, "BROWSER_ID")
+            httpsPort = JDOMExternalizerUtil.readField(own, "HTTPS_PORT")?.toIntOrNull() ?: 0
+            ajpPort = JDOMExternalizerUtil.readField(own, "AJP_PORT")?.toIntOrNull() ?: 0
+            preserveSessions = JDOMExternalizerUtil.readField(own, "PRESERVE_SESSIONS")?.toBoolean() ?: false
+            clearLogsOnStart = JDOMExternalizerUtil.readField(own, "CLEAR_LOGS_ON_START")?.toBoolean() ?: true
+            logDirectory = JDOMExternalizerUtil.readField(own, "LOG_DIRECTORY") ?: ""
         } else {
             // Configuration created by IntelliJ IDEA Ultimate: take the port from the browser URL.
             httpPort = Regex("^https?://[^/:]+:(\\d+)").find(browserUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 8080
@@ -196,6 +224,13 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
         JDOMExternalizerUtil.writeField(own, "JMX_PORT", jmxPort.toString())
         JDOMExternalizerUtil.writeField(own, "DEPLOY_TOMCAT_APPS", deployTomcatApps.toString())
         envs.writeExternal(own)
+        JDOMExternalizerUtil.writeField(own, "SHOW_UPDATE_DIALOG", showUpdateDialog.toString())
+        browserId?.let { JDOMExternalizerUtil.writeField(own, "BROWSER_ID", it) }
+        if (httpsPort != 0) JDOMExternalizerUtil.writeField(own, "HTTPS_PORT", httpsPort.toString())
+        if (ajpPort != 0) JDOMExternalizerUtil.writeField(own, "AJP_PORT", ajpPort.toString())
+        JDOMExternalizerUtil.writeField(own, "PRESERVE_SESSIONS", preserveSessions.toString())
+        JDOMExternalizerUtil.writeField(own, "CLEAR_LOGS_ON_START", clearLogsOnStart.toString())
+        if (logDirectory.isNotBlank()) JDOMExternalizerUtil.writeField(own, "LOG_DIRECTORY", logDirectory)
         element.addContent(own)
     }
 

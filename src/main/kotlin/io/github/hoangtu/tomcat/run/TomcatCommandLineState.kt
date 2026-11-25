@@ -101,15 +101,23 @@ class TomcatCommandLineState(environment: ExecutionEnvironment, private val conf
         val handler = super.startProcess()
         val base = prepared ?: throw ExecutionException("Tomcat base directory was not prepared")
         val isDebug = environment.executor.id == DefaultDebugExecutor.EXECUTOR_ID
-        val instance = RunningTomcat(configuration, base, resolved, handler, isDebug)
-        TomcatInstances.getInstance(configuration.project).register(instance)
+        val project = configuration.project
+        val logTabs = configuration.allLogFiles.filter { it.isEnabled && !it.pathPattern.isNullOrBlank() }.map { (it.name ?: "Log") to it.pathPattern!! }
+        val output = TomcatServerOutput(project, handler, logTabs, Charsets.UTF_8)
+        val instances = TomcatInstances.getInstance(project)
+        instances.replaceOutput(configuration, output)
+        val instance = RunningTomcat(configuration, base, resolved, handler, isDebug, output = output)
+        instances.register(instance)
+        TomcatServicesContributor.select(project, configuration)
 
         if (configuration.openBrowser && configuration.browserUrl.isNotBlank()) {
             val opened = AtomicBoolean(false)
             handler.addProcessListener(object : ProcessListener {
                 override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
                     if (event.text.contains("Server startup in") && opened.compareAndSet(false, true)) {
-                        BrowserUtil.browse(configuration.browserUrl)
+                        val browser = configuration.browserId?.let { com.intellij.ide.browsers.WebBrowserManager.getInstance().findBrowserById(it) }
+                        if (browser != null) com.intellij.ide.browsers.BrowserLauncher.instance.browse(configuration.browserUrl, browser, project)
+                        else BrowserUtil.browse(configuration.browserUrl)
                     }
                 }
             })

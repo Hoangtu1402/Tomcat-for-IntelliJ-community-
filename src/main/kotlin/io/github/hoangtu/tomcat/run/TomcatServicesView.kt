@@ -62,6 +62,17 @@ class TomcatServicesContributor : ServiceViewContributor<TomcatServerNode> {
     override fun getServiceDescriptor(project: Project, service: TomcatServerNode): ServiceViewDescriptor = service.descriptor()
 
     companion object {
+        /** Selects the server node in the Services view (and shows the tool window), like Ultimate does on start. */
+        fun select(project: Project, configuration: TomcatRunConfiguration) {
+            ApplicationManager.getApplication().invokeLater({
+                val settings = RunManager.getInstance(project).allSettings.firstOrNull { it.configuration === configuration }
+                    ?: RunManager.getInstance(project).findConfigurationByName(configuration.name)
+                    ?: return@invokeLater
+                com.intellij.execution.services.ServiceViewManager.getInstance(project)
+                    .select(TomcatServerNode(project, settings), TomcatServicesContributor::class.java, true, false)
+            }, project.disposed)
+        }
+
         fun refresh(project: Project) {
             if (project.isDisposed) return
             project.messageBus.syncPublisher(ServiceEventListener.TOPIC)
@@ -109,12 +120,8 @@ class TomcatServerNode(val project: Project, val settings: RunnerAndConfiguratio
 
         override fun getToolbarActions(): ActionGroup = serverActions()
         override fun getPopupActions(): ActionGroup = serverActions()
-        override fun getContentComponent(): JComponent = serverContent()
-
-        override fun handleDoubleClick(event: MouseEvent): Boolean {
-            showConsole()
-            return true
-        }
+        override fun getContentComponent(): JComponent =
+            TomcatInstances.getInstance(project).lastOutput(configuration)?.getComponent() ?: serverContent()
     }
 
     private fun showConsole() {
@@ -169,7 +176,7 @@ class TomcatServerNode(val project: Project, val settings: RunnerAndConfiguratio
             }
         })
         add(Separator.getInstance())
-        add(object : DumbAwareAction("Show Console", "Show the Tomcat console in the Run/Debug tool window", AllIcons.Debugger.Console) {
+        add(object : DumbAwareAction("Show in Run Tool Window", "Show this run in the Run/Debug tool window", AllIcons.Debugger.Console) {
             override fun getActionUpdateThread() = ActionUpdateThread.BGT
             override fun update(e: AnActionEvent) {
                 e.presentation.isEnabled = running != null
@@ -211,7 +218,7 @@ class TomcatServerNode(val project: Project, val settings: RunnerAndConfiguratio
                 }
             }
             if (instance != null) {
-                row { button("Show Console") { showConsole() } }
+                row { button("Show in Run Tool Window") { showConsole() } }
             }
         }.apply { border = JBUI.Borders.empty(8) }
     }

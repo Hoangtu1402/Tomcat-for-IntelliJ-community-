@@ -57,6 +57,12 @@ class TomcatRunConfigurationTest : BasePlatformTestCase() {
         configuration.updatePolicy = UpdatePolicy.UPDATE_CLASSES_AND_RESOURCES
         configuration.frameDeactivationPolicy = UpdatePolicy.UPDATE_RESOURCES
         configuration.deployments = listOf(TomcatDeployment("a:war exploded", "/"), TomcatDeployment("b:war", "/b"))
+        configuration.showUpdateDialog = false
+        configuration.httpsPort = 8443
+        configuration.ajpPort = 8009
+        configuration.preserveSessions = true
+        configuration.clearLogsOnStart = false
+        configuration.logDirectory = "/var/log/my-tomcat"
         val element = Element("configuration")
         configuration.writeExternal(element)
 
@@ -69,6 +75,59 @@ class TomcatRunConfigurationTest : BasePlatformTestCase() {
         assertEquals(UpdatePolicy.UPDATE_CLASSES_AND_RESOURCES, copy.updatePolicy)
         assertEquals(UpdatePolicy.UPDATE_RESOURCES, copy.frameDeactivationPolicy)
         assertEquals(configuration.deployments, copy.deployments)
+        assertFalse(copy.showUpdateDialog)
+        assertEquals(8443, copy.httpsPort)
+        assertEquals(8009, copy.ajpPort)
+        assertTrue(copy.preserveSessions)
+        assertFalse(copy.clearLogsOnStart)
+        assertEquals("/var/log/my-tomcat", copy.logDirectory)
+    }
+
+    /** Creates every tab of the run configuration editor and checks that reset + apply keeps the values. */
+    fun testSettingsEditorsRoundTrip() {
+        val source = newConfiguration()
+        source.serverName = "Tomcat X"
+        source.httpPort = 9091
+        source.httpsPort = 9443
+        source.jmxPort = 2199
+        source.vmOptions = "-Xmx1g"
+        source.updatePolicy = UpdatePolicy.UPDATE_RESOURCES
+        source.showUpdateDialog = false
+        source.preserveSessions = true
+        source.clearLogsOnStart = false
+        source.logDirectory = "/tmp/tomcat-logs"
+        source.deployments = listOf(TomcatDeployment("x:war exploded", "/x"))
+        source.envs = com.intellij.execution.configuration.EnvironmentVariablesData.create(mapOf("A" to "1"), true)
+
+        val target = newConfiguration()
+        val editors = listOf(
+            io.github.hoangtu.tomcat.run.TomcatServerSettingsEditor(project),
+            io.github.hoangtu.tomcat.run.TomcatDeploymentSettingsEditor(project),
+            io.github.hoangtu.tomcat.run.TomcatLogsSettingsEditor(project),
+            io.github.hoangtu.tomcat.run.TomcatStartupSettingsEditor(),
+        )
+        try {
+            for (editor in editors) {
+                assertNotNull(editor.component)
+                editor.resetFrom(source)
+                editor.applyTo(target)
+            }
+        } finally {
+            editors.forEach { com.intellij.openapi.util.Disposer.dispose(it) }
+        }
+        assertEquals("Tomcat X", target.serverName)
+        assertEquals(9091, target.httpPort)
+        assertEquals(9443, target.httpsPort)
+        assertEquals(0, target.ajpPort)
+        assertEquals(2199, target.jmxPort)
+        assertEquals("-Xmx1g", target.vmOptions)
+        assertEquals(UpdatePolicy.UPDATE_RESOURCES, target.updatePolicy)
+        assertFalse(target.showUpdateDialog)
+        assertTrue(target.preserveSessions)
+        assertFalse(target.clearLogsOnStart)
+        assertEquals("/tmp/tomcat-logs", target.logDirectory)
+        assertEquals(source.deployments, target.deployments)
+        assertEquals(mapOf("A" to "1"), target.envs.envs)
     }
 
     fun testRunAndDebugRunnersAreAvailable() {

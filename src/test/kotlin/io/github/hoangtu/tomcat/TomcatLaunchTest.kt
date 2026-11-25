@@ -94,6 +94,13 @@ class TomcatLaunchTest : JavaProjectTestCase() {
         configuration.httpPort = freePort()
         configuration.jmxPort = freePort()
         configuration.deployments = listOf(TomcatDeployment("app:war exploded", "/app"), TomcatDeployment("other:war exploded", "/other"))
+        // custom log directory, with logs of a "previous run" that must be removed on start
+        val logDir = temp.resolve("tomcat-logs")
+        Files.createDirectories(logDir)
+        Files.writeString(logDir.resolve("catalina.2000-01-01.log"), "old run")
+        Files.writeString(logDir.resolve("keep-me.txt"), "not a Tomcat log")
+        configuration.logDirectory = logDir.toString()
+        configuration.clearLogsOnStart = true
         configuration.checkConfiguration()
 
         val executor = DefaultRunExecutor.getRunExecutorInstance()
@@ -120,6 +127,14 @@ class TomcatLaunchTest : JavaProjectTestCase() {
             }
             assertEquals("Tomcat output:\n$output", 200, response?.first)
             assertEquals("Hello from IntelliJ Community", response!!.second.trim())
+
+            // logs are written to the custom directory in real time and the old ones are gone
+            assertFalse(Files.exists(logDir.resolve("catalina.2000-01-01.log")))
+            assertTrue(Files.exists(logDir.resolve("keep-me.txt")))
+            val catalinaLog = Files.list(logDir).use { files -> files.toList() }.firstOrNull { it.fileName.toString().startsWith("catalina.") }
+            assertNotNull("catalina log in $logDir", catalinaLog)
+            assertTrue(Files.readString(catalinaLog!!).contains("Server startup in"))
+            assertTrue(Files.readString(TomcatCatalinaBase.directoryFor(configuration).resolve("conf/Catalina/localhost/app.xml")).contains("<Manager pathname=\"\"/>"))
 
             assertEquals("other", get("http://localhost:${configuration.httpPort}/other/index.html")?.second?.trim())
             val base = TomcatCatalinaBase.directoryFor(configuration)

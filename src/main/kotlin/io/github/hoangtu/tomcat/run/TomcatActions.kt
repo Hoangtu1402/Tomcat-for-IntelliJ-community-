@@ -84,10 +84,11 @@ open class UpdateTomcatApplicationAction : AnAction(), DumbAware {
         return ModuleUtilCore.findModuleForFile(file, project)
     }
 
-    private fun perform(project: Project, instance: RunningTomcat, module: Module?, dataContext: DataContext) {
+    private fun perform(project: Project, instance: RunningTomcat, module: Module?, @Suppress("UNUSED_PARAMETER") dataContext: DataContext) {
         val instances = TomcatInstances.getInstance(project)
-        if (!alwaysAsk && instance.deployments.size <= 1) {
-            instances.update(instance, instance.configuration.updatePolicy)
+        val configuration = instance.configuration
+        if (!alwaysAsk && !configuration.showUpdateDialog) {
+            instances.update(instance, configuration.updatePolicy)
             return
         }
 
@@ -97,6 +98,7 @@ open class UpdateTomcatApplicationAction : AnAction(), DumbAware {
             else "All applications (${instance.deployments.size})",
             instance.deployments, wholeServer = true,
         )
+        var preselected = 0
         if (module != null && instance.deployments.size > 1) {
             val containing = ReadAction.compute<Set<String>, RuntimeException> {
                 ArtifactUtil.getArtifactsContainingModuleOutput(module).map { it.name }.toSet()
@@ -104,39 +106,20 @@ open class UpdateTomcatApplicationAction : AnAction(), DumbAware {
             val matching = instance.deployments.filter { it.artifactName in containing }
             if (matching.isNotEmpty() && matching.size < instance.deployments.size) {
                 targets += UpdateTarget("Applications containing module '${module.name}'", matching, wholeServer = false)
+                preselected = 1
             }
         }
         if (instance.deployments.size > 1) {
             instance.deployments.forEach { targets += UpdateTarget("${it.artifactName}  (${it.contextPath})", listOf(it), wholeServer = false) }
         }
 
-        val defaultPolicy = instance.configuration.updatePolicy
-        val step = object : BaseListPopupStep<UpdateTarget>("Update '${instance.name}'", targets) {
-            override fun getTextFor(value: UpdateTarget): String = value.label
-            override fun hasSubstep(selectedValue: UpdateTarget): Boolean = true
-            override fun onChosen(selectedValue: UpdateTarget, finalChoice: Boolean): PopupStep<*> {
-                val policies = if (selectedValue.wholeServer) UpdatePolicy.forUpdateAction
-                else UpdatePolicy.forUpdateAction - UpdatePolicy.RESTART
-                return object : BaseListPopupStep<UpdatePolicy>("Action", policies) {
-                    init {
-                        defaultOptionIndex = policies.indexOf(defaultPolicy).coerceAtLeast(0)
-                    }
-
-                    override fun getTextFor(value: UpdatePolicy): String =
-                        value.presentableName + if (value == defaultPolicy) "  (default)" else ""
-
-                    override fun onChosen(policy: UpdatePolicy, finalChoice: Boolean): PopupStep<*>? = doFinalStep {
-                        instances.update(instance, policy, deployments = selectedValue.deployments)
-                    }
-                }
-            }
-        }
-        val popup = JBPopupFactory.getInstance().createListPopup(step)
-        // the module-specific entry is the most likely choice when editing a file of that module
-        if (targets.size > 1 && !targets[1].wholeServer && targets[1].label.startsWith("Applications containing")) {
-            popup.listStep.let { (it as BaseListPopupStep<*>).defaultOptionIndex = 1 }
-        }
-        popup.showInBestPositionFor(dataContext)
+        val dialog = UpdateApplicationDialog(project, instance.name, targets, preselected, configuration.updatePolicy, configuration.showUpdateDialog)
+        if (!dialog.showAndGet()) return
+        val policy = dialog.selectedPolicy
+        // remember the choice like Ultimate does
+        configuration.updatePolicy = policy
+        configuration.showUpdateDialog = !dialog.dontAskAgain
+        instances.update(instance, policy, deployments = dialog.selectedTarget.deployments)
     }
 
     companion object {
@@ -166,5 +149,55 @@ class TomcatFrameDeactivationListener : ApplicationActivationListener {
                 }
             }
         }
+    }
+}
+
+
+/** "Update 'X' application" dialog (as in IntelliJ IDEA Ultimate) with an extra choice of which application(s) to update. */
+private class UpdateApplicationDialog(
+    project: Project,
+    serverName: String,
+    private val targets: List<UpdateTarget>,
+    preselected: Int,
+    defaultPolicy: UpdatePolicy,
+    showDialog: Boolean,
+) : com.intellij.openapi.ui.DialogWrapper(project) {
+    private val targetCombo = com.intellij.openapi.ui.ComboBox(targets.toTypedArray()).apply {
+        renderer = SimpleListCellRenderer.create("") { it.label }
+        selectedIndex = preselected
+    }
+    private val buttons = UpdatePolicy.forUpdateAction.associateWith { javax.swing.JRadioButton(it.presentableName) }
+    private val dontAsk = com.intellij.ui.components.JBCheckBox("Don't ask again", !showDialog)
+
+    init {
+        title = "Update '$serverName' Application"
+        val group = javax.swing.ButtonGroup()
+        buttons.values.forEach(group::add)
+        (buttons[defaultPolicy] ?: buttons.values.first()).isSelected = true
+        targetCombo.addActionListener { updateRestart() }
+        updateRestart()
+        init()
+    }
+
+    private fun updateRestart() {
+        val whole = (targetCombo.selectedItem as UpdateTarget).wholeServer
+        val restart = buttons.getValue(UpdatePolicy.RESTART)
+        restart.isEnabled = whole
+        if (!whole && restart.isSelected) buttons.getValue(UpdatePolicy.REDEPLOY).isSelected = true
+    }
+
+    val selectedTarget: UpdateTarget get() = targetCombo.selectedItem as UpdateTarget
+    val selectedPolicy: UpdatePolicy get() = buttons.entries.first { it.value.isSelected }.key
+    val dontAskAgain: Boolean get() = dontAsk.isSelected
+
+    override fun createCenterPanel(): javax.swing.JComponent = com.intellij.ui.dsl.builder.panel {
+        if (targets.size > 1) {
+            row("Update:") { cell(targetCombo) }
+        }
+        group("What to do on 'Update' action") {
+            buttons.values.forEach { button -> row { cell(button) } }
+        }
+        row { cell(dontAsk) }
+            .rowComment("Can be changed later in the run configuration: Server | On 'Update' action | Show dialog")
     }
 }

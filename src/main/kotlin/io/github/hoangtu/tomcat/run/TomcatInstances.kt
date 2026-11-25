@@ -31,10 +31,16 @@ class RunningTomcat(
     val deployments: List<ResolvedDeployment>,
     val processHandler: ProcessHandler,
     val isDebug: Boolean,
+    val executorId: String = if (isDebug) com.intellij.execution.executors.DefaultDebugExecutor.EXECUTOR_ID
+    else com.intellij.execution.executors.DefaultRunExecutor.EXECUTOR_ID,
 ) {
     val name: String get() = configuration.name
     val jmxPort: Int = configuration.jmxPort
     internal val updating = AtomicBoolean(false)
+
+    /** true once Tomcat printed "Server startup in ..." */
+    @Volatile
+    var started: Boolean = false
 }
 
 /** Keeps track of running Tomcat instances and implements the "Update application" actions. */
@@ -46,12 +52,24 @@ class TomcatInstances(private val project: Project) {
 
     fun register(instance: RunningTomcat) {
         instances += instance
+        TomcatServicesContributor.refresh(project)
         instance.processHandler.addProcessListener(object : ProcessListener {
+            override fun onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key<*>) {
+                if (!instance.started && event.text.contains("Server startup in")) {
+                    instance.started = true
+                    TomcatServicesContributor.refresh(project)
+                }
+            }
+
             override fun processTerminated(event: ProcessEvent) {
                 instances -= instance
+                TomcatServicesContributor.refresh(project)
             }
         })
     }
+
+    fun findByConfiguration(configuration: TomcatRunConfiguration): RunningTomcat? =
+        running.firstOrNull { it.configuration === configuration || it.configuration.name == configuration.name }
 
     fun findByHandler(handler: ProcessHandler?): RunningTomcat? = running.firstOrNull { it.processHandler == handler }
 

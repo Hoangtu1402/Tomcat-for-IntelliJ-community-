@@ -46,8 +46,7 @@
                              displayName="Tomcat Servers"/>
 
     <!-- Services tool window -->
-    <runDashboardDefaultTypesProvider implementation="io.github.hoangtu.tomcat.run.TomcatRunDashboardTypesProvider"/>
-    <runDashboardCustomizer implementation="io.github.hoangtu.tomcat.run.TomcatRunDashboardCustomizer"/>
+    <serviceViewContributor implementation="io.github.hoangtu.tomcat.run.TomcatServicesContributor"/>
     <postStartupActivity implementation="io.github.hoangtu.tomcat.run.TomcatRunDashboardStartupActivity"/>
 
     <notificationGroup id="Tomcat Community" displayType="BALLOON"/>
@@ -55,6 +54,7 @@
 
   <projectListeners>
     <listener class="io.github.hoangtu.tomcat.web.WebModulesRootListener" topic="com.intellij.openapi.roots.ModuleRootListener"/>
+    <listener class="io.github.hoangtu.tomcat.run.TomcatServicesRunManagerListener" topic="com.intellij.execution.RunManagerListener"/>
   </projectListeners>
 
   <applicationListeners>

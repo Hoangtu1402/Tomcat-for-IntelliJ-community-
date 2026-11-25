@@ -77,13 +77,32 @@ class TomcatRunConfigurationTest : BasePlatformTestCase() {
         assertNotNull(com.intellij.execution.runners.ProgramRunner.getRunner(com.intellij.execution.executors.DefaultDebugExecutor.EXECUTOR_ID, configuration))
     }
 
-    fun testShownInServicesView() {
-        val providers = com.intellij.execution.dashboard.RunDashboardDefaultTypesProvider::class.java
-        val ep = com.intellij.openapi.extensions.ExtensionPointName<com.intellij.execution.dashboard.RunDashboardDefaultTypesProvider>("com.intellij.runDashboardDefaultTypesProvider")
-        assertTrue(providers.name, ep.extensionList.any { TomcatConfigurationType.ID in it.getDefaultTypeIds(project) })
-        val manager = com.intellij.execution.dashboard.RunDashboardManager.getInstance(project)
-        manager.types = manager.types + TomcatConfigurationType.ID
-        assertTrue(manager.isShowInDashboard(newConfiguration()))
+    fun testServicesViewShowsServerAndArtifactNodes() {
+        val contributor = com.intellij.execution.services.ServiceViewContributor.CONTRIBUTOR_EP_NAME.extensionList
+            .filterIsInstance<io.github.hoangtu.tomcat.run.TomcatServicesContributor>().single()
+        val runManager = com.intellij.execution.RunManager.getInstance(project)
+        val settings = runManager.createConfiguration("My Tomcat", TomcatConfigurationType.getInstance().configurationFactories.single())
+        (settings.configuration as TomcatRunConfiguration).deployments =
+            listOf(TomcatDeployment("shop:war exploded", "/shop"), TomcatDeployment("admin:war exploded", "/admin"))
+        runManager.addConfiguration(settings)
+        try {
+            val servers = contributor.getServices(project)
+            assertEquals(1, servers.size)
+            val server = servers.single()
+            val serverPresentation = contributor.getServiceDescriptor(project, server).presentation
+            assertEquals("My Tomcat", serverPresentation.presentableText)
+            assertNotNull(contributor.getServiceDescriptor(project, server).contentComponent)
+
+            val children = server.getServices(project)
+            assertEquals(listOf("shop:war exploded", "admin:war exploded"), children.map { it.deployment.artifactName })
+            val child = server.getServiceDescriptor(project, children[0])
+            assertEquals("/shop", child.presentation.locationString)
+            val actions = child.toolbarActions!!.let { (it as com.intellij.openapi.actionSystem.DefaultActionGroup).getChildActionsOrStubs() }
+            assertTrue(actions.any { it.templatePresentation.text == "Redeploy" })
+            assertNotNull(child.contentComponent)
+        } finally {
+            runManager.removeConfiguration(settings)
+        }
     }
 
     fun testContextNames() {

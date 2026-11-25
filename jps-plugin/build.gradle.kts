@@ -9,6 +9,12 @@ java {
     toolchain { languageVersion = JavaLanguageVersion.of(21) }
 }
 
+// The external build process (JPS) runs on the project JDK when it is Java 11 or newer
+// (BuildManager.MINIMUM_REQUIRED_JPS_BUILD_JAVA_VERSION), so this jar must be loadable by Java 11.
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(11)
+}
+
 tasks.jar {
     archiveBaseName.set("tomcat-community-jps")
 }

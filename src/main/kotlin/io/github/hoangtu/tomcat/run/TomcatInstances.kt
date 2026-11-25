@@ -55,7 +55,16 @@ class TomcatInstances(private val project: Project) {
 
     fun findByHandler(handler: ProcessHandler?): RunningTomcat? = running.firstOrNull { it.processHandler == handler }
 
-    fun update(instance: RunningTomcat, policy: UpdatePolicy, silent: Boolean = false) {
+    /**
+     * Applies [policy] to the given [deployments] of a running Tomcat (all of them by default): only the artifacts
+     * of these deployments are built and only their contexts are reloaded, the other applications are not touched.
+     */
+    fun update(
+        instance: RunningTomcat,
+        policy: UpdatePolicy,
+        silent: Boolean = false,
+        deployments: List<ResolvedDeployment> = instance.deployments,
+    ) {
         when (policy) {
             UpdatePolicy.NOTHING -> return
             UpdatePolicy.RESTART -> {
@@ -69,18 +78,18 @@ class TomcatInstances(private val project: Project) {
 
         val artifacts: List<Artifact> = ReadAction.compute<List<Artifact>, RuntimeException> {
             val manager = ArtifactManager.getInstance(project)
-            instance.deployments.mapNotNull { manager.findArtifact(it.artifactName) }
+            deployments.mapNotNull { manager.findArtifact(it.artifactName) }.distinct()
         }
         if (artifacts.isEmpty()) {
             instance.updating.set(false)
             return
         }
-        val stampBefore = classesStamp(instance)
+        val stampBefore = classesStamp(deployments)
         ProjectTaskManager.getInstance(project).build(*artifacts.toTypedArray())
             .onProcessed { result ->
                 try {
                     if (result == null || result.hasErrors() || result.isAborted) return@onProcessed
-                    val classesChanged = classesStamp(instance) != stampBefore
+                    val classesChanged = classesStamp(deployments) != stampBefore
                     val reload = when (policy) {
                         UpdatePolicy.REDEPLOY -> true
                         // in a debug session HotSwap reloads the changed classes without redeploying
@@ -88,7 +97,7 @@ class TomcatInstances(private val project: Project) {
                         else -> false
                     }
                     if (reload && !instance.processHandler.isProcessTerminated) {
-                        ApplicationManager.getApplication().executeOnPooledThread { reloadContexts(instance, silent) }
+                        ApplicationManager.getApplication().executeOnPooledThread { reloadContexts(instance, deployments, silent) }
                     }
                 } finally {
                     instance.updating.set(false)
@@ -97,9 +106,9 @@ class TomcatInstances(private val project: Project) {
     }
 
     /** Last modification time of WEB-INF/classes and WEB-INF/lib of exploded deployments. */
-    private fun classesStamp(instance: RunningTomcat): Long {
+    private fun classesStamp(deployments: List<ResolvedDeployment>): Long {
         var max = 0L
-        for (deployment in instance.deployments) {
+        for (deployment in deployments) {
             val docBase = File(deployment.docBase)
             if (docBase.isFile) {
                 max = maxOf(max, docBase.lastModified())
@@ -112,14 +121,15 @@ class TomcatInstances(private val project: Project) {
         return max
     }
 
-    private fun reloadContexts(instance: RunningTomcat, silent: Boolean) {
+    @org.jetbrains.annotations.VisibleForTesting
+    internal fun reloadContexts(instance: RunningTomcat, deployments: List<ResolvedDeployment>, silent: Boolean) {
         val failed = mutableListOf<String>()
         try {
             val url = JMXServiceURL("service:jmx:rmi:///jndi/rmi://127.0.0.1:${instance.jmxPort}/jmxrmi")
             JMXConnectorFactory.connect(url).use { connector ->
                 val connection = connector.mBeanServerConnection
                 val modules = connection.queryNames(ObjectName("${instance.base.engineName}:j2eeType=WebModule,*"), null)
-                for (deployment in instance.deployments) {
+                for (deployment in deployments) {
                     val ctx = if (deployment.contextPath == "/") "/" else deployment.contextPath
                     val target = "//${instance.base.hostName}$ctx"
                     val module = modules.firstOrNull { it.getKeyProperty("name") == target }
@@ -133,7 +143,7 @@ class TomcatInstances(private val project: Project) {
         } catch (e: Exception) {
             LOG.info("JMX reload failed, falling back to touching the context descriptors", e)
             failed.clear()
-            failed += instance.deployments.map { it.contextPath }
+            failed += deployments.map { it.contextPath }
         }
         // Fallback: Tomcat's auto-deployer redeploys a context whose descriptor was modified.
         for (ctx in failed) {
@@ -142,7 +152,7 @@ class TomcatInstances(private val project: Project) {
         }
         if (!silent) {
             NotificationGroupManager.getInstance().getNotificationGroup("Tomcat Community")
-                .createNotification("'${instance.name}': application${if (instance.deployments.size > 1) "s" else ""} redeployed", NotificationType.INFORMATION)
+                .createNotification("'${instance.name}': redeployed " + deployments.joinToString { it.contextPath }, NotificationType.INFORMATION)
                 .notify(project)
         }
     }

@@ -77,6 +77,15 @@ class TomcatRunConfigurationTest : BasePlatformTestCase() {
         assertNotNull(com.intellij.execution.runners.ProgramRunner.getRunner(com.intellij.execution.executors.DefaultDebugExecutor.EXECUTOR_ID, configuration))
     }
 
+    fun testShownInServicesView() {
+        val providers = com.intellij.execution.dashboard.RunDashboardDefaultTypesProvider::class.java
+        val ep = com.intellij.openapi.extensions.ExtensionPointName<com.intellij.execution.dashboard.RunDashboardDefaultTypesProvider>("com.intellij.runDashboardDefaultTypesProvider")
+        assertTrue(providers.name, ep.extensionList.any { TomcatConfigurationType.ID in it.getDefaultTypeIds(project) })
+        val manager = com.intellij.execution.dashboard.RunDashboardManager.getInstance(project)
+        manager.types = manager.types + TomcatConfigurationType.ID
+        assertTrue(manager.isShowInDashboard(newConfiguration()))
+    }
+
     fun testContextNames() {
         assertEquals("ROOT", TomcatContexts.descriptorName("/"))
         assertEquals("ROOT", TomcatContexts.descriptorName(""))

@@ -22,10 +22,13 @@ import java.net.ServerSocket
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
-import javax.management.ObjectName
-import javax.management.remote.JMXConnectorFactory
-import javax.management.remote.JMXServiceURL
-import kotlin.concurrent.thread
+import com.intellij.execution.process.OSProcessHandler
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessListener
+import com.intellij.openapi.util.Key
+import io.github.hoangtu.tomcat.run.ResolvedDeployment
+import io.github.hoangtu.tomcat.run.RunningTomcat
+import io.github.hoangtu.tomcat.run.TomcatInstances
 
 /**
  * Starts a real Tomcat with the command line produced by the run configuration.
@@ -69,15 +72,18 @@ class TomcatLaunchTest : JavaProjectTestCase() {
         }
 
         // a "built" exploded artifact
-        val exploded = createTempDirectory().toPath().resolve("app")
-        Files.createDirectories(exploded.resolve("WEB-INF"))
-        Files.writeString(exploded.resolve("index.html"), "Hello from IntelliJ Community")
-        Files.writeString(exploded.resolve("WEB-INF/web.xml"), "<web-app/>")
-        WriteAction.runAndWait<Exception> {
-            val model = ArtifactManager.getInstance(project).createModifiableModel()
-            model.addArtifact("app:war exploded", ExplodedWarArtifactType.getInstance()).outputPath =
-                exploded.toString().replace(File.separatorChar, '/')
-            model.commit()
+        val temp = createTempDirectory().toPath()
+        for (name in listOf("app", "other")) {
+            val exploded = temp.resolve(name)
+            Files.createDirectories(exploded.resolve("WEB-INF"))
+            Files.writeString(exploded.resolve("index.html"), if (name == "app") "Hello from IntelliJ Community" else "other")
+            Files.writeString(exploded.resolve("WEB-INF/web.xml"), "<web-app/>")
+            WriteAction.runAndWait<Exception> {
+                val model = ArtifactManager.getInstance(project).createModifiableModel()
+                model.addArtifact("$name:war exploded", ExplodedWarArtifactType.getInstance()).outputPath =
+                    exploded.toString().replace(File.separatorChar, '/')
+                model.commit()
+            }
         }
 
         val serverName = TomcatCommunitySettings.getInstance().register(Path.of(tomcatHome))
@@ -87,17 +93,22 @@ class TomcatLaunchTest : JavaProjectTestCase() {
         configuration.serverName = serverName
         configuration.httpPort = freePort()
         configuration.jmxPort = freePort()
-        configuration.deployments = listOf(TomcatDeployment("app:war exploded", "/app"))
+        configuration.deployments = listOf(TomcatDeployment("app:war exploded", "/app"), TomcatDeployment("other:war exploded", "/other"))
         configuration.checkConfiguration()
 
         val executor = DefaultRunExecutor.getRunExecutorInstance()
         val environment = ExecutionEnvironmentBuilder.create(project, executor, configuration).build()
         val state = configuration.getState(executor, environment) as TomcatCommandLineState
         val commandLine = state.javaParameters.toCommandLine()
-        val process = commandLine.createProcess()
+        val handler = OSProcessHandler(commandLine)
         val output = StringBuffer()
-        thread(isDaemon = true) { process.inputStream.bufferedReader().forEachLine { output.appendLine(it) } }
-        thread(isDaemon = true) { process.errorStream.bufferedReader().forEachLine { output.appendLine(it) } }
+        handler.addProcessListener(object : ProcessListener {
+            override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
+                output.append(event.text)
+            }
+        })
+        handler.startNotify()
+        val process = handler.process
         try {
             val url = "http://localhost:${configuration.httpPort}/app/index.html"
             var response: Pair<Int, String>? = null
@@ -110,20 +121,27 @@ class TomcatLaunchTest : JavaProjectTestCase() {
             assertEquals("Tomcat output:\n$output", 200, response?.first)
             assertEquals("Hello from IntelliJ Community", response!!.second.trim())
 
-            // JMX is available, so the "Redeploy" update action can reload the context
+            assertEquals("other", get("http://localhost:${configuration.httpPort}/other/index.html")?.second?.trim())
             val base = TomcatCatalinaBase.directoryFor(configuration)
             assertTrue(Files.isRegularFile(base.resolve("conf/Catalina/localhost/app.xml")))
-            JMXConnectorFactory.connect(JMXServiceURL("service:jmx:rmi:///jndi/rmi://127.0.0.1:${configuration.jmxPort}/jmxrmi")).use { c ->
-                val connection = c.mBeanServerConnection
-                val module = connection.queryNames(ObjectName("Catalina:j2eeType=WebModule,*"), null)
-                    .single { it.getKeyProperty("name") == "//localhost/app" }
-                connection.invoke(module, "reload", null, null)
-            }
-            Thread.sleep(1000)
+            assertTrue(Files.isRegularFile(base.resolve("conf/Catalina/localhost/other.xml")))
+
+            // Redeploy only one application ("update a single module"): the other one must not be reloaded
+            val deployments = listOf(
+                ResolvedDeployment("/app", temp.resolve("app").toString(), "app:war exploded"),
+                ResolvedDeployment("/other", temp.resolve("other").toString(), "other:war exploded"),
+            )
+            val instance = RunningTomcat(configuration, TomcatCatalinaBase.Prepared(base, "localhost", "Catalina"), deployments, handler, false)
+            TomcatInstances.getInstance(project).register(instance)
+            TomcatInstances.getInstance(project).reloadContexts(instance, listOf(deployments[0]), silent = true)
+            val deadline2 = System.currentTimeMillis() + 15_000
+            while (!output.contains("Reloading Context with name [/app] is completed") && System.currentTimeMillis() < deadline2) Thread.sleep(200)
+            assertTrue("Tomcat output:\n$output", output.contains("Reloading Context with name [/app] is completed"))
+            assertFalse("only /app must be reloaded", output.contains("Reloading Context with name [/other]"))
             assertEquals(200, get(url)?.first)
             println(output)
         } finally {
-            process.destroy()
+            handler.destroyProcess()
             process.waitFor()
         }
     }

@@ -10,6 +10,8 @@ Plugin bổ sung cho **IntelliJ IDEA Community 2025.3+** những tính năng web
 | **Tự tạo artifact cho Maven/Gradle** | Module có `src/main/webapp` sẽ tự có Web facet + `<module>:war exploded` và `<module>:war`. `WEB-INF/lib` tự cập nhật khi dependency thay đổi (bỏ qua `provided`/`compileOnly` và `test`). |
 | **Run configuration `Tomcat Server › Local`** | Run & Debug, chọn artifact + context path, cổng HTTP/JMX, VM options, biến môi trường, JRE riêng, mở trình duyệt sau khi khởi động, tab log *Tomcat Localhost Log* / *Catalina Log*. Mỗi cấu hình dùng một `CATALINA_BASE` riêng, không động vào thư mục Tomcat gốc. |
 | **Update application (Ctrl+F10)** | *Update resources*, *Update classes and resources* (HotSwap khi debug), *Redeploy* (reload context qua JMX), *Restart server*. Có tuỳ chọn tự cập nhật khi IDE mất focus (*On frame deactivation*). |
+| **Update từng module** | Khi deploy nhiều artifact, Ctrl+F10 (hoặc *Update Tomcat Application…*, Ctrl+Alt+F10) cho chọn: tất cả, ứng dụng chứa module của file đang sửa, hoặc một artifact bất kỳ. Chỉ artifact đó được build và chỉ context đó được reload. |
+| **Services view** | Cấu hình Tomcat hiện trong cửa sổ *Services* (Alt+8): run/debug/stop, cổng HTTP, link mở từng context path, nút Update trên toolbar và trong menu chuột phải. |
 | **Tương thích dự án tạo bằng Ultimate** | Đọc được Web facet, artifact `exploded-war`/`war` (kể cả phần tử `'Web' facet resources`) và run configuration Tomcat của Ultimate. Plugin có phần mở rộng cho tiến trình build (JPS) nên các artifact này build được trên Community. |
 
 Hỗ trợ Tomcat 7 – 11 (`javax.*` lẫn `jakarta.*`).
@@ -33,6 +35,9 @@ Hỗ trợ Tomcat 7 – 11 (`javax.*` lẫn `jakarta.*`).
    - Tab *Server*: chọn Tomcat, cổng HTTP, URL mở trình duyệt, hành động khi *Update*.
    - Tab *Deployment*: `+` để thêm artifact và đặt context path (mặc định `/ten_artifact`). Bước *Build artifact* trước khi chạy được tự thêm.
 4. Bấm **Run** hoặc **Debug**. Khi đang chạy, sửa code rồi bấm **Ctrl+F10** (*Run › Update Tomcat Application*) để cập nhật mà không cần khởi động lại.
+   - Nếu cấu hình deploy nhiều artifact, một popup hiện ra: chọn *All applications*, *Applications containing module '…'* (module của file đang mở, được chọn sẵn) hoặc một artifact cụ thể, rồi chọn hành động (Update resources / Update classes and resources / Redeploy).
+   - *Run › Update Tomcat Application…* (**Ctrl+Alt+F10**) luôn hỏi, kể cả khi chỉ có một artifact.
+5. **Services** (*View › Tool Windows › Services*, Alt+8): các cấu hình Tomcat được thêm tự động. Từ đây có thể chạy/dừng, bấm link context path để mở trình duyệt, và Update qua toolbar hoặc menu chuột phải.
 
 ## Cấu trúc mã nguồn
 

@@ -1,0 +1,68 @@
+<idea-plugin>
+  <id>io.github.hoangtu.tomcat-community</id>
+  <name>Tomcat &amp; WAR Support for Community</name>
+  <vendor>hoangtu1402</vendor>
+
+  <description><![CDATA[
+    Brings the Tomcat / web application workflow of IntelliJ IDEA Ultimate to IntelliJ IDEA Community Edition:
+    <ul>
+      <li><b>Web facet</b> (same format as Ultimate) with framework detection of <code>WEB-INF/web.xml</code></li>
+      <li><b>Web Application: Exploded</b> and <b>Web Application: Archive</b> (.war) artifacts,
+          compatible with artifacts created by IntelliJ IDEA Ultimate</li>
+      <li>Automatic <code>module:war exploded</code> / <code>module:war</code> artifacts for Maven and Gradle web modules,
+          kept in sync with the module dependencies</li>
+      <li><b>Tomcat Server &gt; Local</b> run configuration: run &amp; debug, artifact deployment with context paths,
+          per-configuration CATALINA_BASE, open browser, Tomcat log tabs</li>
+      <li><b>Update application</b> (Ctrl+F10): update resources, update classes (HotSwap in debug), redeploy, restart server;
+          optional update on frame deactivation</li>
+    </ul>
+    Tomcat 7 – 11 are supported.
+  ]]></description>
+
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.xml</depends>
+  <depends>com.intellij.java</depends>
+
+  <!-- IntelliJ IDEA Ultimate already provides all of this -->
+  <incompatible-with>com.intellij.javaee.web</incompatible-with>
+  <incompatible-with>Tomcat</incompatible-with>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <!-- Web facet & artifacts -->
+    <facetType implementation="io.github.hoangtu.tomcat.web.WebFacetType"/>
+    <framework.detector implementation="io.github.hoangtu.tomcat.web.WebFrameworkDetector"/>
+    <packaging.artifactType implementation="io.github.hoangtu.tomcat.artifact.ExplodedWarArtifactType" order="first"/>
+    <packaging.artifactType implementation="io.github.hoangtu.tomcat.artifact.WarArtifactType" order="after exploded-war"/>
+    <packaging.elementType implementation="io.github.hoangtu.tomcat.artifact.WebFacetResourcesElementType"/>
+    <postStartupActivity implementation="io.github.hoangtu.tomcat.web.WebModulesStartupActivity"/>
+
+    <!-- Build process (JPS) support for the web facet and 'javaee-facet-resources' layout elements -->
+    <compileServer.plugin classpath="tomcat-community.jps-plugin.jar"/>
+
+    <!-- Tomcat -->
+    <configurationType implementation="io.github.hoangtu.tomcat.run.TomcatConfigurationType"/>
+    <applicationConfigurable parentId="build" id="community.tomcat.servers"
+                             instance="io.github.hoangtu.tomcat.server.TomcatServersConfigurable"
+                             displayName="Tomcat Servers"/>
+
+    <notificationGroup id="Tomcat Community" displayType="BALLOON"/>
+  </extensions>
+
+  <projectListeners>
+    <listener class="io.github.hoangtu.tomcat.web.WebModulesRootListener" topic="com.intellij.openapi.roots.ModuleRootListener"/>
+  </projectListeners>
+
+  <applicationListeners>
+    <listener class="io.github.hoangtu.tomcat.run.TomcatFrameDeactivationListener"
+              topic="com.intellij.openapi.application.ApplicationActivationListener"/>
+  </applicationListeners>
+
+  <actions>
+    <action id="CommunityTomcat.UpdateApplication" class="io.github.hoangtu.tomcat.run.UpdateTomcatApplicationAction"
+            text="Update Tomcat Application" description="Update the application deployed on a running Tomcat"
+            icon="AllIcons.Javaee.UpdateRunningApplication">
+      <keyboard-shortcut keymap="$default" first-keystroke="ctrl F10"/>
+      <add-to-group group-id="RunMenu" anchor="after" relative-to-action="Stop"/>
+    </action>
+  </actions>
+</idea-plugin>

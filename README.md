@@ -46,7 +46,7 @@ Hỗ trợ Tomcat 7 – 11 (`javax.*` lẫn `jakarta.*`).
         ├─ shop:war exploded    /shop   [deployed]
         └─ admin:war exploded   /admin  [deployed]
    ```
-   - Chọn node server: Run, Debug, Stop, Restart, Update tất cả, Show Console (nhấp đúp cũng mở console trong cửa sổ Run/Debug).
+   - Toolbar của node server: Run, Debug, Stop, Restart, Update tất cả, Show in Run Tool Window, Edit Configuration.
    - Chọn node artifact: Update resources, Update classes and resources, Redeploy chỉ áp dụng cho artifact đó. Nhấp đúp để mở trình duyệt.
    - Chọn node server: bên phải hiện tab **Output** (console) và các tab log Tomcat, cập nhật theo thời gian thực. Khi Tomcat khởi động, Services tự mở và chọn server đó.
 

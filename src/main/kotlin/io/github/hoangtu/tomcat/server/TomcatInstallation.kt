@@ -18,6 +18,9 @@ data class TomcatInstallation(val home: Path) {
 
     val majorVersion: Int? get() = version?.substringBefore('.')?.toIntOrNull()
 
+    /** Minimum Java version this Tomcat runs on (null when the version is unknown). */
+    val requiredJavaVersion: Int? get() = version?.let(::requiredJavaVersion)
+
     /** Tomcat 10+ uses the jakarta.* namespace. */
     val isJakarta: Boolean get() = (majorVersion ?: 10) >= 10
 
@@ -39,6 +42,21 @@ data class TomcatInstallation(val home: Path) {
     }
 
     companion object {
+        /** From https://tomcat.apache.org/whichversion.html */
+        fun requiredJavaVersion(tomcatVersion: String): Int? {
+            val parts = tomcatVersion.split('.')
+            val major = parts.getOrNull(0)?.toIntOrNull() ?: return null
+            val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+            return when {
+                major >= 11 -> 17
+                major == 10 && minor >= 1 -> 11
+                major == 10 || major == 9 -> 8
+                major == 8 -> 7
+                major == 7 -> 6
+                else -> null
+            }
+        }
+
         fun validate(home: Path): String? = when {
             !Files.isDirectory(home) -> "Directory does not exist"
             !Files.isRegularFile(home.resolve("bin/bootstrap.jar")) -> "bin/bootstrap.jar not found: this is not a Tomcat home directory"

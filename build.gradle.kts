@@ -53,5 +53,7 @@ intellijPlatform {
 tasks.test {
     // Optional: path to a Tomcat installation for the end-to-end launch test (skipped when not set)
     providers.environmentVariable("TOMCAT_HOME").orNull?.let { systemProperty("tomcat.home", it) }
+    // Optional: JDK used as project SDK to run Tomcat in the launch test (e.g. a Java 11 JDK)
+    providers.environmentVariable("TEST_JDK_HOME").orNull?.let { systemProperty("test.jdk.home", it) }
     providers.environmentVariable("SCREENSHOTS").orNull?.let { systemProperty("screenshots", it) }
 }

@@ -130,6 +130,7 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
         if (name.isNullOrBlank()) throw serverError("Application server is not specified")
         val installation = installation ?: throw serverError("Application server '$name' is not configured")
         if (!installation.isValid) throw serverError("Tomcat installation '${installation.home}' is invalid or missing")
+        TomcatJdk.incompatibility(this)?.let { throw RuntimeConfigurationError(it) }
         if (httpPort !in 1..65535) throw RuntimeConfigurationError("HTTP port must be between 1 and 65535")
         if (jmxPort !in 1..65535) throw RuntimeConfigurationError("JMX port must be between 1 and 65535")
         if (jmxPort == httpPort) throw RuntimeConfigurationError("HTTP and JMX ports must be different")

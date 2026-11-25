@@ -31,7 +31,9 @@ class TomcatServersConfigurable : Configurable {
         object : ColumnInfo<TomcatCommunitySettings.ServerEntry, String>("Version") {
             override fun valueOf(item: TomcatCommunitySettings.ServerEntry): String {
                 val installation = TomcatInstallation(Path.of(item.home))
-                return if (installation.isValid) installation.version ?: "?" else "invalid"
+                if (!installation.isValid) return "invalid"
+                val version = installation.version ?: return "?"
+                return version + (installation.requiredJavaVersion?.let { "  (Java $it+)" } ?: "")
             }
         },
     )

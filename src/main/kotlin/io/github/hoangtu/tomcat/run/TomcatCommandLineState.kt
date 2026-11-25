@@ -37,6 +37,7 @@ class TomcatCommandLineState(environment: ExecutionEnvironment, private val conf
     override fun createJavaParameters(): JavaParameters {
         val project = configuration.project
         val installation = configuration.requireInstallation()
+        ReadAction.compute<String?, RuntimeException> { TomcatJdk.incompatibility(configuration) }?.let { throw CantRunException(it) }
 
         resolved = ReadAction.compute<List<ResolvedDeployment>, ExecutionException> {
             val manager = ArtifactManager.getInstance(project)

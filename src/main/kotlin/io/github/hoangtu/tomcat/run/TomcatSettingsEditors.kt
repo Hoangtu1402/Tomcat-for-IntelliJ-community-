@@ -100,7 +100,8 @@ class TomcatServerSettingsEditor(private val project: Project) : SettingsEditor<
             name.isNullOrBlank() -> "Add a Tomcat installation with 'Configure…'"
             installation == null -> "<html><font color='red'>'$name' is not configured</font></html>"
             !installation.isValid -> "<html><font color='red'>Invalid Tomcat home: ${installation.home}</font></html>"
-            else -> "Tomcat ${installation.version ?: "?"} (${if (installation.isJakarta) "jakarta.*" else "javax.*"}) — ${installation.home}"
+            else -> "Tomcat ${installation.version ?: "?"} (${if (installation.isJakarta) "jakarta.*" else "javax.*"}" +
+                (installation.requiredJavaVersion?.let { ", Java $it+" } ?: "") + ") — ${installation.home}"
         }
     }
 

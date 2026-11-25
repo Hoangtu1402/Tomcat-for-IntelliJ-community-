@@ -65,7 +65,7 @@ class TomcatLaunchTest : JavaProjectTestCase() {
         }
 
         // project JDK = the JDK running the tests
-        sdk = JavaSdk.getInstance().createJdk("launch-test-jdk", System.getProperty("java.home"), false)
+        sdk = JavaSdk.getInstance().createJdk("launch-test-jdk", System.getProperty("test.jdk.home") ?: System.getProperty("java.home"), false)
         WriteAction.runAndWait<Exception> {
             ProjectJdkTable.getInstance().addJdk(sdk!!, testRootDisposable)
             ProjectRootManager.getInstance(project).projectSdk = sdk

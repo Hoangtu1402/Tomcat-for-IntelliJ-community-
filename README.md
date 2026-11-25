@@ -18,6 +18,18 @@ Plugin bổ sung cho **IntelliJ IDEA Community 2025.3+** những tính năng web
 
 Hỗ trợ Tomcat 7 – 11 (`javax.*` lẫn `jakarta.*`).
 
+### Phiên bản Java
+
+Plugin chạy bên trong IntelliJ (luôn dùng Java 21 đi kèm IDE), còn Tomcat chạy bằng **Project SDK** hoặc *JRE* chọn trong tab *Server*. Mỗi bản Tomcat cần Java tối thiểu:
+
+| Tomcat | Java tối thiểu | Servlet API | Chạy với Java 11? |
+|---|---|---|---|
+| 9.0 | 8 | `javax.*` | ✔ (đã kiểm tra với 9.0.124) |
+| 10.1 | 11 | `jakarta.*` | ✔ (đã kiểm tra với 10.1.62) |
+| 11.0 | 17 | `jakarta.*` | ✘ — plugin báo lỗi ngay khi cấu hình |
+
+Dùng **Tomcat 9.0** nếu ứng dụng dùng `javax.servlet`, **Tomcat 10.1** nếu dùng `jakarta.servlet`.
+
 ## Cài đặt
 
 1. Build plugin (cần JDK 21):

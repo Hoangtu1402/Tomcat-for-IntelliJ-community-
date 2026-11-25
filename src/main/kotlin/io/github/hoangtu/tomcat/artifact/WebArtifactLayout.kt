@@ -3,7 +3,6 @@ package io.github.hoangtu.tomcat.artifact
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.LibraryOrderEntry
-import com.intellij.openapi.roots.ModuleOrderEntry
 import com.intellij.openapi.roots.OrderEnumerator
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.packaging.artifacts.Artifact
@@ -42,17 +41,19 @@ object WebArtifactLayout {
     private fun collectDependencies(module: Module): Dependencies {
         val libraries = LinkedHashMap<String, LibraryOrderEntry>()
         val modules = LinkedHashSet<Module>()
-        OrderEnumerator.orderEntries(module).productionOnly().runtimeOnly().recursively().withoutSdk().withoutModuleSourceEntries()
-            .forEach { entry ->
-                when (entry) {
-                    is LibraryOrderEntry -> {
-                        val key = "${entry.libraryLevel}|${entry.libraryName ?: entry.presentableName}|${if (entry.isModuleLevel) entry.ownerModule.name else ""}"
-                        libraries.putIfAbsent(key, entry)
-                    }
-                    is ModuleOrderEntry -> entry.module?.takeIf { it != module }?.let(modules::add)
-                }
-                true
+        val enumerator = OrderEnumerator.orderEntries(module).productionOnly().runtimeOnly().recursively().withoutSdk()
+        enumerator.forEach { entry ->
+            if (entry is LibraryOrderEntry) {
+                val key = "${entry.libraryLevel}|${entry.libraryName ?: entry.presentableName}|${if (entry.isModuleLevel) entry.ownerModule.name else ""}"
+                libraries.putIfAbsent(key, entry)
             }
+            true
+        }
+        // In recursive mode the ModuleOrderEntry items are followed, not reported by forEach: ask for the modules directly.
+        enumerator.forEachModule { dependency ->
+            if (dependency != module) modules += dependency
+            true
+        }
         return Dependencies(libraries.values.toList(), modules.toList())
     }
 

@@ -44,6 +44,10 @@ class WebModulesSynchronizer(private val project: Project) : PersistentStateComp
         @get:XMap
         @get:MapAnnotation(surroundWithTag = false)
         var managed: MutableMap<String, String> = LinkedHashMap()
+
+        /** modules whose Web facet was created by this plugin (its web roots follow pom.xml / build.gradle) */
+        @get:com.intellij.util.xmlb.annotations.XCollection(propertyElementName = "managedFacets", elementName = "module", valueAttributeName = "name")
+        var managedFacets: MutableSet<String> = LinkedHashSet()
     }
 
     private var state = SyncState()
@@ -66,6 +70,7 @@ class WebModulesSynchronizer(private val project: Project) : PersistentStateComp
         val module: Module,
         val info: WebModuleInfo,
         val addFacet: Boolean,
+        val updateFacetRoots: Boolean,
         val explodedName: String,
         val warName: String,
         val signature: String,
@@ -83,6 +88,7 @@ class WebModulesSynchronizer(private val project: Project) : PersistentStateComp
                 LOG.warn(e)
                 return@executeOnPooledThread
             }
+            reportForeignWebRoots()
             if (plans.isEmpty()) return@executeOnPooledThread
             ApplicationManager.getApplication().invokeLater({ apply(plans) }, project.disposed)
         }
@@ -92,13 +98,27 @@ class WebModulesSynchronizer(private val project: Project) : PersistentStateComp
     @org.jetbrains.annotations.TestOnly
     fun syncNow() {
         val plans = ReadAction.compute<List<Plan>, RuntimeException> { computePlans() }
+        foreignWebRoots.clear()
         if (plans.isNotEmpty()) apply(plans)
     }
 
     private fun computePlans(): List<Plan> {
         val artifactManager = ArtifactManager.getInstance(project)
+        val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(project)
         val candidates = ModuleManager.getInstance(project).modules.mapNotNull { module ->
             val info = WebModuleSupport.findWebInfo(module) ?: return@mapNotNull null
+            // A web directory that belongs to another module (e.g. a facet of the parent module pointing at a child's
+            // WebContent) would put that module's web content into this module's WAR: skip it and tell the user.
+            val foreign = info.webRoots.mapNotNull { root ->
+                val dir = com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(root.path) ?: return@mapNotNull null
+                val owner = fileIndex.getModuleForFile(dir, false)
+                if (owner != null && owner != module && owner.name != module.name.removeSuffix(".main") &&
+                    owner.name.removeSuffix(".main") != module.name.removeSuffix(".main")) root.path to owner.name else null
+            }
+            if (foreign.isNotEmpty()) {
+                foreignWebRoots += foreign.map { (path, owner) -> "Web facet of module '${module.name}' uses '$path', which belongs to module '$owner'" }
+                return@mapNotNull null
+            }
             if (info.buildSystem == BuildSystem.NONE && info.facet == null) return@mapNotNull null
             if (info.facet == null && !WebModuleSupport.hasProductionSources(module) &&
                 ModuleManager.getInstance(project).findModuleByName(module.name + ".main") != null
@@ -117,10 +137,13 @@ class WebModulesSynchronizer(private val project: Project) : PersistentStateComp
             val managedSignature = state.managed[explodedName]
             val otherArtifactsUseModule = exploded == null && ArtifactUtil.getArtifactsContainingModuleOutput(module)
                 .any { it.artifactType.id == ExplodedWarArtifactType.ID }
+            val descriptorRoots = WebModuleSupport.describe(module)?.takeIf { it.isWar }?.webRoots
             val plan = Plan(
                 module = module,
                 info = info,
                 addFacet = info.facet == null && info.buildSystem != BuildSystem.NONE,
+                updateFacetRoots = info.facet != null && module.name in state.managedFacets &&
+                    descriptorRoots != null && descriptorRoots != info.facet.webRoots,
                 explodedName = explodedName,
                 warName = warName,
                 signature = signature,
@@ -129,8 +152,24 @@ class WebModulesSynchronizer(private val project: Project) : PersistentStateComp
                 createWar = artifactManager.findArtifact(warName) == null && exploded == null && !otherArtifactsUseModule &&
                     info.buildSystem != BuildSystem.NONE,
             )
-            plan.takeIf { it.addFacet || it.createExploded || it.updateExploded || it.createWar }
+            plan.takeIf { it.addFacet || it.updateFacetRoots || it.createExploded || it.updateExploded || it.createWar }
         }
+    }
+
+    private val foreignWebRoots = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private val reportedForeign = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    private fun reportForeignWebRoots() {
+        val fresh = foreignWebRoots.filter { reportedForeign.add(it) }
+        foreignWebRoots.clear()
+        if (fresh.isEmpty()) return
+        ApplicationManager.getApplication().invokeLater({
+            NotificationGroupManager.getInstance().getNotificationGroup("Tomcat Community")
+                .createNotification("Web content of another module",
+                    fresh.joinToString("<br>") + "<br>Fix the Web facet in File | Project Structure | Facets; no WAR artifact is created for it.",
+                    NotificationType.WARNING)
+                .notify(project)
+        }, project.disposed)
     }
 
     private fun apply(plans: List<Plan>) {
@@ -142,14 +181,20 @@ class WebModulesSynchronizer(private val project: Project) : PersistentStateComp
                     val facetType = WebFacetType.instance
                     val configuration = facetType.createDefaultConfiguration().apply {
                         webRoots = plan.info.webRoots
-                        plan.info.webRoots.firstOrNull()?.let { root ->
-                            val webXml = com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(root.path + "/WEB-INF/web.xml")
-                            if (webXml != null) descriptors = listOf(DeploymentDescriptor("web.xml", webXml.url))
+                        plan.info.webXmlPath?.let {
+                            descriptors = listOf(DeploymentDescriptor("web.xml", com.intellij.openapi.vfs.VfsUtilCore.pathToUrl(it)))
                         }
                     }
                     val model = FacetManager.getInstance(plan.module).createModifiableModel()
                     model.addFacet(FacetManager.getInstance(plan.module).createFacet(facetType, facetType.defaultFacetName, configuration, null))
                     model.commit()
+                    state.managedFacets += plan.module.name
+                }
+                if (plan.updateFacetRoots && plan.module.isLoaded) {
+                    val facet = WebFacet.getInstances(plan.module).firstOrNull() ?: continue
+                    val roots = WebModuleSupport.describe(plan.module)?.webRoots ?: continue
+                    facet.configuration.webRoots = roots
+                    FacetManager.getInstance(plan.module).facetConfigurationChanged(facet)
                 }
             }
 

@@ -33,7 +33,7 @@ class IncrementalBuildTest : JavaProjectTestCase() {
         lateinit var a: VirtualFile
         val root = WriteAction.computeAndWait<VirtualFile, Exception> {
             val r = VfsUtil.findFileByIoFile(dir, true)!!
-            VfsUtil.saveText(r.createChildData(this, "pom.xml"), "<project/>")
+            VfsUtil.saveText(r.createChildData(this, "pom.xml"), "<project><packaging>war</packaging></project>")
             val pkg = VfsUtil.createDirectories(r.path + "/src/main/java/demo")
             a = pkg.createChildData(this, "A.java")
             VfsUtil.saveText(a, "package demo; public class A { public String hello() { return \"v1\"; } }")

@@ -40,7 +40,7 @@ class WebModuleSyncTest : JavaProjectTestCase() {
         val dir = createTempDirectory()
         root = WriteAction.computeAndWait<VirtualFile, Exception> {
             val r = VfsUtil.findFileByIoFile(dir, true)!!
-            VfsUtil.saveText(r.createChildData(this, "pom.xml"), "<project/>")
+            VfsUtil.saveText(r.createChildData(this, "pom.xml"), "<project><packaging>war</packaging></project>")
             VfsUtil.createDirectories(r.path + "/src/main/java")
             val webInf = VfsUtil.createDirectories(r.path + "/src/main/webapp/WEB-INF")
             VfsUtil.saveText(webInf.createChildData(this, "web.xml"), "<web-app/>")

@@ -25,6 +25,14 @@ class WebFacet(
 
     val webRoots: List<WebRoot> get() = configuration.webRoots
 
+    /** A Web facet added by hand gets the web directory from pom.xml / build.gradle (or the usual locations). */
+    override fun initFacet() {
+        super.initFacet()
+        if (configuration.webRoots.isEmpty()) {
+            configuration.webRoots = WebModuleSupport.suggestWebRoots(module)
+        }
+    }
+
     companion object {
         val ID: FacetTypeId<WebFacet> = FacetTypeId("web")
 

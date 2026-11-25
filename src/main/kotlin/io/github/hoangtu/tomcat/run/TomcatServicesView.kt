@@ -29,9 +29,9 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
-import com.intellij.packaging.artifacts.Artifact
 import com.intellij.packaging.artifacts.ArtifactManager
 import com.intellij.task.ProjectTaskManager
+import io.github.hoangtu.tomcat.artifact.WebArtifacts
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBUI
@@ -231,7 +231,14 @@ class TomcatDeploymentNode(val server: TomcatServerNode, val deployment: TomcatD
     private fun resolved(instance: RunningTomcat): ResolvedDeployment? =
         instance.deployments.firstOrNull { it.artifactName == deployment.artifactName && it.contextPath == TomcatContexts.normalize(deployment.contextPath) }
 
-    private fun artifact(): Artifact? = ArtifactManager.getInstance(project).findArtifact(deployment.artifactName)
+    /** Snapshot of the artifact taken inside a read action (the Services tree renders on EDT without one). */
+    private class ArtifactInfo(val icon: Icon, val typeName: String, val outputFilePath: String?)
+
+    private fun artifact(): ArtifactInfo? = WebArtifacts.read {
+        ArtifactManager.getInstance(project).findArtifact(deployment.artifactName)?.let {
+            ArtifactInfo(it.artifactType.icon, it.artifactType.presentableName, it.outputFilePath)
+        }
+    }
 
     fun descriptor(): ServiceViewDescriptor = object : ServiceViewDescriptor {
         override fun getId(): String = "tomcat:" + server.settings.uniqueID + ":" + deployment.artifactName + ":" + deployment.contextPath
@@ -240,7 +247,7 @@ class TomcatDeploymentNode(val server: TomcatServerNode, val deployment: TomcatD
             val artifact = artifact()
             val instance = instance()
             val deployed = instance != null && instance.started && resolved(instance) != null
-            val baseIcon: Icon = artifact?.artifactType?.icon ?: AllIcons.Nodes.Artifact
+            val baseIcon: Icon = artifact?.icon ?: AllIcons.Nodes.Artifact
             return PresentationData(deployment.artifactName, deployment.contextPath, if (deployed) ExecutionUtil.getLiveIndicator(baseIcon) else baseIcon, null).apply {
                 addText(deployment.artifactName, if (artifact == null) SimpleTextAttributes.ERROR_ATTRIBUTES else SimpleTextAttributes.REGULAR_ATTRIBUTES)
                 addText("  ${TomcatContexts.normalize(deployment.contextPath)}", SimpleTextAttributes.GRAY_ATTRIBUTES)
@@ -257,7 +264,7 @@ class TomcatDeploymentNode(val server: TomcatServerNode, val deployment: TomcatD
             val instance = instance()
             val url = contextUrl(configuration, TomcatContexts.normalize(deployment.contextPath))
             return panel {
-                row("Artifact:") { label(deployment.artifactName + (artifact?.let { "  (${it.artifactType.presentableName})" } ?: "  — not found")) }
+                row("Artifact:") { label(deployment.artifactName + (artifact?.let { "  (${it.typeName})" } ?: "  — not found")) }
                 row("Output:") { label(artifact?.outputFilePath ?: "-") }
                 row("Context:") { label(TomcatContexts.normalize(deployment.contextPath)) }
                 row("URL:") { if (instance != null) browserLink(url, url) else label(url) }
@@ -305,7 +312,7 @@ class TomcatDeploymentNode(val server: TomcatServerNode, val deployment: TomcatD
                 e.presentation.isEnabled = artifact() != null
             }
             override fun actionPerformed(e: AnActionEvent) {
-                artifact()?.let { ProjectTaskManager.getInstance(project).build(it) }
+                WebArtifacts.find(project, deployment.artifactName)?.let { ProjectTaskManager.getInstance(project).build(it) }
             }
         })
     }

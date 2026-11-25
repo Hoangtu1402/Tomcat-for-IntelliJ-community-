@@ -8,7 +8,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.packaging.artifacts.Artifact
 import com.intellij.packaging.artifacts.ArtifactManager
 import com.intellij.packaging.impl.run.BuildArtifactsBeforeRunTaskProvider
 import com.intellij.ui.JBIntSpinner
@@ -165,17 +164,22 @@ class TomcatDeploymentSettingsEditor(private val project: Project) : SettingsEdi
         val decorated = ToolbarDecorator.createDecorator(table)
             .setAddAction { button ->
                 val existing = model.items.map { it.artifactName }.toSet()
-                val available = WebArtifacts.all(project).filter { it.name !in existing }
+                // snapshot (name, icon) inside a read action: the popup renders on EDT
+                val available = WebArtifacts.read {
+                    WebArtifacts.all(project).filter { it.name !in existing }.map { it.name to it.artifactType.icon }
+                }
                 if (available.isEmpty()) return@setAddAction
                 JBPopupFactory.getInstance().createPopupChooserBuilder(available)
                     .setTitle("Deploy at Server Startup")
-                    .setRenderer(SimpleListCellRenderer.create<Artifact> { label, value, _ ->
-                        label.text = value.name
-                        label.icon = value.artifactType.icon
+                    .setRenderer(SimpleListCellRenderer.create<Pair<String, javax.swing.Icon>> { label, value, _ ->
+                        label.text = value.first
+                        label.icon = value.second
                     })
-                    .setItemChosenCallback { artifact ->
-                        model.addRow(Row(artifact.name, TomcatDeployment.defaultContextPath(artifact.name)))
-                        BuildArtifactsBeforeRunTaskProvider.setBuildArtifactBeforeRunOption(component, project, artifact, true)
+                    .setItemChosenCallback { (name, _) ->
+                        model.addRow(Row(name, TomcatDeployment.defaultContextPath(name)))
+                        WebArtifacts.find(project, name)?.let {
+                            BuildArtifactsBeforeRunTaskProvider.setBuildArtifactBeforeRunOption(component, project, it, true)
+                        }
                         fireEditorStateChanged()
                     }
                     .createPopup()
@@ -184,7 +188,7 @@ class TomcatDeploymentSettingsEditor(private val project: Project) : SettingsEdi
             .setRemoveAction {
                 val selected = table.selectedObjects.toList()
                 for (row in selected) {
-                    ArtifactManager.getInstance(project).findArtifact(row.artifactName)?.let {
+                    WebArtifacts.find(project, row.artifactName)?.let {
                         BuildArtifactsBeforeRunTaskProvider.setBuildArtifactBeforeRunOption(component, project, it, false)
                     }
                     model.removeRow(model.items.indexOf(row))

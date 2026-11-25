@@ -92,8 +92,9 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
         val settings = TomcatCommunitySettings.getInstance()
         if (serverName == null) serverName = settings.servers.firstOrNull()?.name
         if (deployments.isEmpty()) {
-            val artifact = ArtifactManager.getInstance(project).getArtifactsByType(ExplodedWarArtifactType.getInstance()).minByOrNull { it.name }
-                ?: WebArtifacts.all(project).firstOrNull()
+            val artifact = WebArtifacts.read {
+                ArtifactManager.getInstance(project).getArtifactsByType(ExplodedWarArtifactType.getInstance()).minByOrNull { it.name }
+            } ?: WebArtifacts.all(project).firstOrNull()
             if (artifact != null) {
                 val ctx = TomcatDeployment.defaultContextPath(artifact.name)
                 deployments = listOf(TomcatDeployment(artifact.name, ctx))
@@ -114,9 +115,8 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
         if (httpPort !in 1..65535) throw RuntimeConfigurationError("HTTP port must be between 1 and 65535")
         if (jmxPort !in 1..65535) throw RuntimeConfigurationError("JMX port must be between 1 and 65535")
         if (jmxPort == httpPort) throw RuntimeConfigurationError("HTTP and JMX ports must be different")
-        val manager = ArtifactManager.getInstance(project)
         for (deployment in deployments) {
-            if (manager.findArtifact(deployment.artifactName) == null) {
+            if (WebArtifacts.find(project, deployment.artifactName) == null) {
                 throw RuntimeConfigurationError("Artifact '${deployment.artifactName}' does not exist")
             }
         }

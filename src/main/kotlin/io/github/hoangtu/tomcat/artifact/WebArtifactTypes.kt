@@ -90,6 +90,16 @@ object WebArtifacts {
     fun isWebArtifact(artifact: Artifact): Boolean =
         artifact.artifactType.id == ExplodedWarArtifactType.ID || artifact.artifactType.id == WarArtifactType.ID
 
-    fun all(project: com.intellij.openapi.project.Project): List<Artifact> =
+    /** All web artifacts of the project. Safe to call from any thread (takes a read action). */
+    fun all(project: com.intellij.openapi.project.Project): List<Artifact> = read {
         ArtifactManager.getInstance(project).artifacts.filter(::isWebArtifact).sortedBy { it.name }
+    }
+
+    /** Finds an artifact by name. Safe to call from any thread (takes a read action). */
+    fun find(project: com.intellij.openapi.project.Project, name: String): Artifact? = read {
+        ArtifactManager.getInstance(project).findArtifact(name)
+    }
+
+    /** The artifact model is backed by the workspace model and may only be read inside a read action. */
+    fun <T> read(computation: () -> T): T = com.intellij.openapi.application.ReadAction.compute<T, RuntimeException>(computation)
 }

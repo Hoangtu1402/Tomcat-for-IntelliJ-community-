@@ -100,6 +100,20 @@ class TomcatRunConfigurationTest : BasePlatformTestCase() {
             val actions = child.toolbarActions!!.let { (it as com.intellij.openapi.actionSystem.DefaultActionGroup).getChildActionsOrStubs() }
             assertTrue(actions.any { it.templatePresentation.text == "Redeploy" })
             assertNotNull(child.contentComponent)
+
+            // Regression: the Services tree renders nodes without a read action; reading the artifact model there
+            // must not fail ("Read access is allowed from inside read-action only").
+            val fromOtherThread = com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread<String> {
+                val descriptor = server.getServiceDescriptor(project, children[1])
+                descriptor.presentation.presentableText + "|" + contributor.getServiceDescriptor(project, server).presentation.presentableText
+            }
+            assertEquals("admin:war exploded|My Tomcat", fromOtherThread.get(30, java.util.concurrent.TimeUnit.SECONDS))
+            val check = com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread<Unit> {
+                (settings.configuration as TomcatRunConfiguration).let {
+                    try { it.checkConfiguration() } catch (_: com.intellij.execution.configurations.RuntimeConfigurationException) {}
+                }
+            }
+            check.get(30, java.util.concurrent.TimeUnit.SECONDS)
         } finally {
             runManager.removeConfiguration(settings)
         }

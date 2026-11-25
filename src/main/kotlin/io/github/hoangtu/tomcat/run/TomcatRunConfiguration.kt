@@ -81,13 +81,14 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
     var ajpPort: Int = 0
     var preserveSessions: Boolean = false
 
-    /** Delete Tomcat log files (and start a fresh console output file) every time the server is started. */
-    var clearLogsOnStart: Boolean = true
+    /** Optional (off by default): delete the Tomcat log files of the previous run every time the server is started. */
+    var clearLogsOnStart: Boolean = false
     /** Directory for Tomcat's own log files (catalina.*.log, localhost.*.log, access logs); empty = CATALINA_BASE/logs. */
     var logDirectory: String = ""
 
     init {
-        addPredefinedLogFile(PredefinedLogFile(LOG_LOCALHOST, true))
+        // Optional log tabs, off by default (the Output console already shows Tomcat's log messages).
+        addPredefinedLogFile(PredefinedLogFile(LOG_LOCALHOST, false))
         addPredefinedLogFile(PredefinedLogFile(LOG_CATALINA, false))
     }
 
@@ -145,7 +146,8 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
             try {
                 java.nio.file.Path.of(com.intellij.openapi.util.io.FileUtil.toSystemDependentName(logDirectory.trim()))
             } catch (e: java.nio.file.InvalidPathException) {
-                throw RuntimeConfigurationError("Invalid log directory: ${e.message}")
+                // optional feature: warn, but do not prevent running (the default log directory is used)
+                throw RuntimeConfigurationWarning("Invalid log directory, the default one will be used: ${e.message}")
             }
         }
         val contexts = deployments.map { TomcatContexts.normalize(it.contextPath) }
@@ -197,7 +199,9 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
             httpsPort = JDOMExternalizerUtil.readField(own, "HTTPS_PORT")?.toIntOrNull() ?: 0
             ajpPort = JDOMExternalizerUtil.readField(own, "AJP_PORT")?.toIntOrNull() ?: 0
             preserveSessions = JDOMExternalizerUtil.readField(own, "PRESERVE_SESSIONS")?.toBoolean() ?: false
-            clearLogsOnStart = JDOMExternalizerUtil.readField(own, "CLEAR_LOGS_ON_START")?.toBoolean() ?: true
+            // version 1 of the plugin stored "true" as its default; only an explicit choice (version 2+) is kept
+            clearLogsOnStart = JDOMExternalizerUtil.readField(own, "LOG_OPTIONS_VERSION") != null &&
+                JDOMExternalizerUtil.readField(own, "CLEAR_LOGS_ON_START")?.toBoolean() == true
             logDirectory = JDOMExternalizerUtil.readField(own, "LOG_DIRECTORY") ?: ""
         } else {
             // Configuration created by IntelliJ IDEA Ultimate: take the port from the browser URL.
@@ -236,7 +240,8 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
         if (httpsPort != 0) JDOMExternalizerUtil.writeField(own, "HTTPS_PORT", httpsPort.toString())
         if (ajpPort != 0) JDOMExternalizerUtil.writeField(own, "AJP_PORT", ajpPort.toString())
         JDOMExternalizerUtil.writeField(own, "PRESERVE_SESSIONS", preserveSessions.toString())
-        JDOMExternalizerUtil.writeField(own, "CLEAR_LOGS_ON_START", clearLogsOnStart.toString())
+        JDOMExternalizerUtil.writeField(own, "LOG_OPTIONS_VERSION", "2")
+        if (clearLogsOnStart) JDOMExternalizerUtil.writeField(own, "CLEAR_LOGS_ON_START", "true")
         if (logDirectory.isNotBlank()) JDOMExternalizerUtil.writeField(own, "LOG_DIRECTORY", logDirectory)
         element.addContent(own)
     }

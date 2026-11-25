@@ -100,6 +100,13 @@ class TomcatCommandLineState(environment: ExecutionEnvironment, private val conf
     override fun startProcess(): com.intellij.execution.process.OSProcessHandler {
         val handler = super.startProcess()
         val base = prepared ?: throw ExecutionException("Tomcat base directory was not prepared")
+        if (base.warnings.isNotEmpty()) {
+            handler.addProcessListener(object : ProcessListener {
+                override fun startNotified(event: ProcessEvent) {
+                    base.warnings.forEach { handler.notifyTextAvailable("Warning: $it\n", com.intellij.execution.process.ProcessOutputTypes.STDERR) }
+                }
+            })
+        }
         val isDebug = environment.executor.id == DefaultDebugExecutor.EXECUTOR_ID
         val project = configuration.project
         val logTabs = configuration.allLogFiles.filter { it.isEnabled && !it.pathPattern.isNullOrBlank() }.map { (it.name ?: "Log") to it.pathPattern!! }

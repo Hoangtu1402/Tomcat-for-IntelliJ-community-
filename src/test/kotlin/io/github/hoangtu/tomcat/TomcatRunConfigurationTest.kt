@@ -178,6 +178,55 @@ class TomcatRunConfigurationTest : BasePlatformTestCase() {
         }
     }
 
+    fun testOptionalLogFeaturesAreOffByDefault() {
+        val configuration = newConfiguration()
+        assertFalse(configuration.clearLogsOnStart)
+        assertEquals("", configuration.logDirectory)
+        assertFalse(configuration.isSaveOutputToFile)
+        assertTrue(configuration.predefinedLogFiles.none { it.isEnabled })
+
+        // configurations saved by plugin version 1 stored CLEAR_LOGS_ON_START=true as the default: it is not kept
+        val old = JDOMUtil.load("""
+            <configuration APPLICATION_SERVER_NAME="Tomcat">
+              <community-tomcat>
+                <option name="HTTP_PORT" value="8080" />
+                <option name="CLEAR_LOGS_ON_START" value="true" />
+              </community-tomcat>
+            </configuration>
+        """.trimIndent())
+        val migrated = newConfiguration().apply { readExternal(old) }
+        assertFalse(migrated.clearLogsOnStart)
+
+        // an explicit choice made with the current version is kept
+        val element = Element("configuration")
+        newConfiguration().apply { clearLogsOnStart = true }.writeExternal(element)
+        assertTrue(newConfiguration().apply { readExternal(element) }.clearLogsOnStart)
+    }
+
+    /** A broken optional log setting must not prevent Tomcat from starting: it only produces a warning. */
+    fun testInvalidLogDirectoryDoesNotBreakStart() {
+        val home = java.nio.file.Files.createTempDirectory("fake-tomcat")
+        java.nio.file.Files.createDirectories(home.resolve("conf"))
+        java.nio.file.Files.writeString(home.resolve("conf/server.xml"), """
+            <Server port="8005" shutdown="SHUTDOWN">
+              <Service name="Catalina">
+                <Connector port="8080" protocol="HTTP/1.1"/>
+                <Engine name="Catalina" defaultHost="localhost"><Host name="localhost" appBase="webapps"/></Engine>
+              </Service>
+            </Server>
+        """.trimIndent())
+        java.nio.file.Files.writeString(home.resolve("conf/logging.properties"), "1catalina.org.apache.juli.AsyncFileHandler.directory = \${'$'}{catalina.base}/logs\n")
+        val configuration = newConfiguration()
+        configuration.name = "invalid-log-dir"
+        configuration.logDirectory = "bad\u0000dir"
+        configuration.clearLogsOnStart = true
+        val prepared = io.github.hoangtu.tomcat.run.TomcatCatalinaBase.prepare(
+            configuration, io.github.hoangtu.tomcat.server.TomcatInstallation(home), emptyList())
+        assertTrue(prepared.warnings.toString(), prepared.warnings.any { it.contains("Cannot use log directory") })
+        // logging.properties is left untouched (default ${'$'}{catalina.base}/logs)
+        assertTrue(java.nio.file.Files.readString(prepared.base.resolve("conf/logging.properties")).contains("\${'$'}{catalina.base}/logs"))
+    }
+
     fun testContextNames() {
         assertEquals("ROOT", TomcatContexts.descriptorName("/"))
         assertEquals("ROOT", TomcatContexts.descriptorName(""))

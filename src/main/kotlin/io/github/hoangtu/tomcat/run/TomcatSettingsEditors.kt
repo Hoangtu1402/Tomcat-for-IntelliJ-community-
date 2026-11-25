@@ -281,14 +281,18 @@ class TomcatLogsSettingsEditor(private val project: Project) : SettingsEditor<To
     private val logDirectory = TextFieldWithBrowseButton().apply {
         addBrowseFolderListener(project, FileChooserDescriptorFactory.createSingleFolderDescriptor().withTitle("Tomcat Log Directory"))
     }
-    private val clearLogs = JBCheckBox("Clear all logs on every start (Tomcat log files, console output file and console)")
+    private val clearLogs = JBCheckBox("Clear old Tomcat log files on every start")
 
     override fun createEditor(): JComponent = panel {
         row { cell(platformPanel.component).align(Align.FILL) }.resizableRow()
-        group("Tomcat Log Files") {
+        group("Tomcat Log Files (optional)") {
             row("Log directory:") { cell(logDirectory).align(AlignX.FILL) }
-                .rowComment("catalina.*.log, localhost.*.log and access logs are written here in real time. Empty = the run configuration's own directory.")
+                .rowComment("Leave empty to keep the default. When set, catalina.*.log, localhost.*.log and access logs are written there in real time.")
             row { cell(clearLogs) }
+                .rowComment("Off by default. The console and 'Save console output to file' always start empty on every run.")
+            row {
+                comment("These options never stop Tomcat from starting: if a directory cannot be used, a warning is printed and the default is used.")
+            }
         }
     }
 

@@ -52,13 +52,18 @@ object TomcatCatalinaBase {
 
     /** Where Tomcat writes catalina.*.log, localhost.*.log and access logs. */
     fun logDirectoryFor(configuration: TomcatRunConfiguration): Path {
-        val custom = configuration.logDirectory.trim()
-        if (custom.isEmpty()) return directoryFor(configuration).resolve("logs")
-        val path = try {
-            Path.of(FileUtil.toSystemDependentName(custom))
+        if (configuration.logDirectory.isBlank()) return directoryFor(configuration).resolve("logs")
+        return try {
+            customLogDirectory(configuration)
         } catch (_: java.nio.file.InvalidPathException) {
-            return directoryFor(configuration).resolve("logs") // reported by checkConfiguration()
+            directoryFor(configuration).resolve("logs") // reported by checkConfiguration() and as a warning on start
         }
+    }
+
+    /** The user-chosen log directory (relative paths are resolved against the project). Throws on an invalid path. */
+    @Throws(java.nio.file.InvalidPathException::class)
+    private fun customLogDirectory(configuration: TomcatRunConfiguration): Path {
+        val path = Path.of(FileUtil.toSystemDependentName(configuration.logDirectory.trim()))
         if (path.isAbsolute) return path
         val projectDir = configuration.project.basePath ?: return path.toAbsolutePath()
         return Path.of(projectDir).resolve(path).normalize()
@@ -85,7 +90,7 @@ object TomcatCatalinaBase {
         }
     }
 
-    class Prepared(val base: Path, val hostName: String, val engineName: String) {
+    class Prepared(val base: Path, val hostName: String, val engineName: String, val warnings: List<String> = emptyList()) {
         fun contextFile(contextPath: String): Path =
             base.resolve("conf").resolve(engineName).resolve(hostName).resolve(TomcatContexts.descriptorName(contextPath) + ".xml")
     }
@@ -99,17 +104,34 @@ object TomcatCatalinaBase {
             Files.createDirectories(conf)
             copyDirectory(installation.home.resolve("conf"), conf)
             for (dir in listOf("logs", "temp", "work", "webapps")) Files.createDirectories(base.resolve(dir))
-            val logDir = logDirectoryFor(configuration)
-            Files.createDirectories(logDir)
-            if (configuration.clearLogsOnStart) clearLogs(configuration)
-            patchLoggingProperties(conf.resolve("logging.properties"), logDir)
+
+            // Optional log features: they never prevent Tomcat from starting, problems are reported as warnings.
+            val warnings = mutableListOf<String>()
+            var customLogDir: Path? = null
+            if (configuration.logDirectory.isNotBlank()) {
+                try {
+                    val dir = customLogDirectory(configuration)
+                    Files.createDirectories(dir)
+                    patchLoggingProperties(conf.resolve("logging.properties"), dir)
+                    customLogDir = dir
+                } catch (e: Exception) {
+                    warnings += "Cannot use log directory '${configuration.logDirectory}' (${e.message}); Tomcat logs are written to ${base.resolve("logs")}"
+                }
+            }
+            if (configuration.clearLogsOnStart) {
+                try {
+                    clearLogs(configuration)
+                } catch (e: Exception) {
+                    warnings += "Cannot clear old log files: ${e.message}"
+                }
+            }
 
             val serverXml = conf.resolve("server.xml")
             val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(serverXml.toFile())
-            val (engineName, hostName) = patchServerXml(document, configuration, installation, logDir)
+            val (engineName, hostName) = patchServerXml(document, configuration, installation, customLogDir)
             serverXml.writeText(serialize(document))
 
-            val prepared = Prepared(base, hostName, engineName)
+            val prepared = Prepared(base, hostName, engineName, warnings)
             val contextDir = conf.resolve(engineName).resolve(hostName)
             Files.createDirectories(contextDir)
             for (deployment in deployments) {
@@ -159,7 +181,7 @@ object TomcatCatalinaBase {
     }
 
     /** Returns (engine name, host name). */
-    private fun patchServerXml(document: Document, configuration: TomcatRunConfiguration, installation: TomcatInstallation, logDir: Path): Pair<String, String> {
+    private fun patchServerXml(document: Document, configuration: TomcatRunConfiguration, installation: TomcatInstallation, logDir: Path?): Pair<String, String> {
         val server = document.documentElement
         // The server is stopped by the IDE (process termination triggers Tomcat's shutdown hook): no shutdown port needed.
         server.setAttribute("port", "-1")
@@ -196,9 +218,9 @@ object TomcatCatalinaBase {
             connector.setAttribute("port", configuration.ajpPort.toString())
         }
 
-        // access logs go to the same directory as the other logs
+        // access logs go to the same (custom) directory as the other logs
         val valves = document.getElementsByTagName("Valve")
-        for (i in 0 until valves.length) {
+        if (logDir != null) for (i in 0 until valves.length) {
             val valve = valves.item(i) as Element
             if (valve.getAttribute("className").endsWith("AccessLogValve")) valve.setAttribute("directory", logDir.toString())
         }

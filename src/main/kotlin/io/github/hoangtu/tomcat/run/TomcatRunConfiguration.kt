@@ -141,6 +141,13 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
                 throw RuntimeConfigurationError("Artifact '${deployment.artifactName}' does not exist")
             }
         }
+        if (logDirectory.isNotBlank()) {
+            try {
+                java.nio.file.Path.of(com.intellij.openapi.util.io.FileUtil.toSystemDependentName(logDirectory.trim()))
+            } catch (e: java.nio.file.InvalidPathException) {
+                throw RuntimeConfigurationError("Invalid log directory: ${e.message}")
+            }
+        }
         val contexts = deployments.map { TomcatContexts.normalize(it.contextPath) }
         if (contexts.toSet().size != contexts.size) throw RuntimeConfigurationError("Context paths of deployed artifacts must be unique")
         if (deployments.isEmpty() && !deployTomcatApps) throw RuntimeConfigurationWarning("No artifacts marked for deployment")

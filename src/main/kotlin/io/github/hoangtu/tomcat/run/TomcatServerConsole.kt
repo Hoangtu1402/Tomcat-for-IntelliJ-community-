@@ -88,8 +88,12 @@ class TomcatServerOutput(
             Disposer.register(this, logConsole)
             logConsoles += logConsole
             tabs.addTab(title, logConsole.component)
-            val tail = LogTail(pattern, logCharset) { logConsole.print(it, ConsoleViewContentType.NORMAL_OUTPUT) }
-            tails += AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(tail::poll, 0, 500, TimeUnit.MILLISECONDS)
+            try {
+                val tail = LogTail(pattern, logCharset) { logConsole.print(it, ConsoleViewContentType.NORMAL_OUTPUT) }
+                tails += AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(tail::poll, 0, 500, TimeUnit.MILLISECONDS)
+            } catch (e: Exception) {
+                logConsole.print("Cannot follow log file $pattern: ${e.message}\n", ConsoleViewContentType.ERROR_OUTPUT)
+            }
         }
         component = tabs
         return tabs
@@ -105,10 +109,25 @@ class TomcatServerOutput(
     }
 }
 
+/**
+ * Splits a log path pattern such as `C:\logs/localhost.*.log` into the directory and the file-name glob.
+ * The glob must not go through [Path.of]: on Windows `*` is an illegal path character.
+ */
+internal fun splitLogPattern(pattern: String): Pair<String, String> {
+    val index = maxOf(pattern.lastIndexOf('/'), pattern.lastIndexOf('\\'))
+    return if (index < 0) "." to pattern else pattern.substring(0, index) to pattern.substring(index + 1)
+}
+
 /** Follows the newest file matching a pattern like `/path/logs/localhost.*.log` ("tail -f"). */
 private class LogTail(pattern: String, private val charset: Charset, private val sink: (String) -> Unit) {
-    private val dir: Path = Path.of(pattern).parent
-    private val matcher = FileSystems.getDefault().getPathMatcher("glob:" + Path.of(pattern).fileName.toString())
+    private val dir: Path
+    private val matcher: java.nio.file.PathMatcher
+
+    init {
+        val (directory, glob) = splitLogPattern(pattern)
+        dir = Path.of(directory)
+        matcher = FileSystems.getDefault().getPathMatcher("glob:$glob")
+    }
     private var current: Path? = null
     private var offset = 0L
 

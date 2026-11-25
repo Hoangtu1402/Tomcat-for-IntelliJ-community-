@@ -54,7 +54,11 @@ object TomcatCatalinaBase {
     fun logDirectoryFor(configuration: TomcatRunConfiguration): Path {
         val custom = configuration.logDirectory.trim()
         if (custom.isEmpty()) return directoryFor(configuration).resolve("logs")
-        val path = Path.of(FileUtil.toSystemDependentName(custom))
+        val path = try {
+            Path.of(FileUtil.toSystemDependentName(custom))
+        } catch (_: java.nio.file.InvalidPathException) {
+            return directoryFor(configuration).resolve("logs") // reported by checkConfiguration()
+        }
         if (path.isAbsolute) return path
         val projectDir = configuration.project.basePath ?: return path.toAbsolutePath()
         return Path.of(projectDir).resolve(path).normalize()

@@ -16,6 +16,14 @@ class TomcatServerOutputTest : BasePlatformTestCase() {
         return impl.text
     }
 
+    /** Windows paths: the glob must be split off without going through Path.of ("Illegal char <*>"). */
+    fun testSplitLogPattern() {
+        assertEquals("C:\\Users\\me\\tomcat\\logs" to "localhost.*.log",
+            io.github.hoangtu.tomcat.run.splitLogPattern("C:\\Users\\me\\tomcat\\logs/localhost.*.log"))
+        assertEquals("C:\\logs" to "catalina.*.log", io.github.hoangtu.tomcat.run.splitLogPattern("C:\\logs\\catalina.*.log"))
+        assertEquals("/var/log/tomcat" to "localhost.*.log", io.github.hoangtu.tomcat.run.splitLogPattern("/var/log/tomcat/localhost.*.log"))
+    }
+
     fun testOutputBeforeAndAfterConsoleCreationAndLogTail() {
         val logDir = Files.createTempDirectory("tomcat-logs")
         val handler = NopProcessHandler()

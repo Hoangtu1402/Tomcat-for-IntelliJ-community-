@@ -303,8 +303,12 @@ class TomcatLogsSettingsEditor(private val project: Project) : SettingsEditor<To
         // "Save console output to file" with a relative path: resolve against the project directory
         val output = c.outputFilePath
         val base = project.basePath
-        if (!output.isNullOrBlank() && base != null && !Path.of(FileUtil.toSystemDependentName(output)).isAbsolute) {
-            c.setFileOutputPath(FileUtil.toSystemIndependentName(Path.of(base).resolve(output).normalize().toString()))
+        try {
+            if (!output.isNullOrBlank() && base != null && !Path.of(FileUtil.toSystemDependentName(output)).isAbsolute) {
+                c.setFileOutputPath(FileUtil.toSystemIndependentName(Path.of(base).resolve(output).normalize().toString()))
+            }
+        } catch (_: java.nio.file.InvalidPathException) {
+            // keep the text as typed; writing the file will report the problem
         }
         c.logDirectory = FileUtil.toSystemIndependentName(logDirectory.text.trim())
         c.clearLogsOnStart = clearLogs.isSelected

@@ -184,13 +184,17 @@ class TomcatServerSettingsEditor(private val project: Project) : SettingsEditor<
 
 /** "Deployment" tab: artifact list + "Application context" of the selected artifact (as in Ultimate). */
 class TomcatDeploymentSettingsEditor(private val project: Project) : SettingsEditor<TomcatRunConfiguration>() {
-    private class Item(val artifactName: String, var contextPath: String, val icon: Icon?)
+    /** A row of the list: a project artifact, or an external source when [externalPath] is set. */
+    private class Item(val artifactName: String, var contextPath: String, val icon: Icon?, val externalPath: String? = null)
 
     private val listModel = CollectionListModel<Item>()
     private val list = JBList(listModel).apply {
-        cellRenderer = SimpleListCellRenderer.create { label, value, _ ->
-            label.text = value.artifactName
-            label.icon = value.icon
+        cellRenderer = object : com.intellij.ui.ColoredListCellRenderer<Item>() {
+            override fun customizeCellRenderer(list: javax.swing.JList<out Item>, value: Item, index: Int, selected: Boolean, hasFocus: Boolean) {
+                icon = value.icon
+                append(value.artifactName)
+                value.externalPath?.let { append("  External Source: " + FileUtil.toSystemDependentName(it), com.intellij.ui.SimpleTextAttributes.GRAYED_ATTRIBUTES) }
+            }
         }
     }
     private val contextField = JBTextField()
@@ -218,32 +222,22 @@ class TomcatDeploymentSettingsEditor(private val project: Project) : SettingsEdi
     override fun createEditor(): JComponent {
         val decorated = ToolbarDecorator.createDecorator(list)
             .setAddAction { button ->
-                val existing = listModel.items.map { it.artifactName }.toSet()
-                // snapshot (name, icon) inside a read action: the popup renders on EDT
-                val available = WebArtifacts.read {
-                    WebArtifacts.all(project).filter { it.name !in existing }.map { it.name to it.artifactType.icon }
-                }
-                if (available.isEmpty()) return@setAddAction
-                JBPopupFactory.getInstance().createPopupChooserBuilder(available)
-                    .setTitle("Artifact to Deploy")
-                    .setRenderer(SimpleListCellRenderer.create<Pair<String, Icon>> { label, value, _ ->
-                        label.text = value.first
-                        label.icon = value.second
+                // like Ultimate: "+" offers "Artifact..." and "External Source..."
+                val choices = listOf("Artifact…", "External Source…")
+                JBPopupFactory.getInstance().createPopupChooserBuilder(choices)
+                    .setRenderer(SimpleListCellRenderer.create<String> { label, value, _ ->
+                        label.text = value
+                        label.icon = if (value.startsWith("Artifact")) com.intellij.icons.AllIcons.Nodes.Artifact else com.intellij.icons.AllIcons.Nodes.Folder
                     })
-                    .setItemChosenCallback { (name, icon) ->
-                        listModel.add(Item(name, TomcatDeployment.defaultContextPath(name), icon))
-                        list.selectedIndex = listModel.size - 1
-                        WebArtifacts.find(project, name)?.let {
-                            BuildArtifactsBeforeRunTaskProvider.setBuildArtifactBeforeRunOption(component, project, it, true)
-                        }
-                        fireEditorStateChanged()
+                    .setItemChosenCallback { choice ->
+                        if (choice.startsWith("Artifact")) chooseArtifact(button.preferredPopupPoint) else chooseExternalSource()
                     }
                     .createPopup()
                     .show(button.preferredPopupPoint)
             }
             .setRemoveAction {
                 for (item in list.selectedValuesList) {
-                    WebArtifacts.find(project, item.artifactName)?.let {
+                    if (item.externalPath == null) WebArtifacts.find(project, item.artifactName)?.let {
                         BuildArtifactsBeforeRunTaskProvider.setBuildArtifactBeforeRunOption(component, project, it, false)
                     }
                     listModel.remove(item)
@@ -256,20 +250,71 @@ class TomcatDeploymentSettingsEditor(private val project: Project) : SettingsEdi
             row { cell(decorated).align(Align.FILL) }.resizableRow()
             row("Application context:") { cell(contextField).align(AlignX.FILL) }
             row {
-                comment("Artifacts of type 'Web Application: Exploded' or 'Web Application: Archive'. " +
-                    "Create them in File | Project Structure | Artifacts; Maven/Gradle web modules get them automatically.")
+                comment("Artifact: a web artifact of the project, built before launch.")
+            }
+            row {
+                comment("External Source: a .war file or an exploded web application directory outside the project, deployed as is.")
             }
         }
         return component
     }
 
+    private fun chooseArtifact(point: com.intellij.ui.awt.RelativePoint) {
+        val existing = listModel.items.filter { it.externalPath == null }.map { it.artifactName }.toSet()
+        // snapshot (name, icon) inside a read action: the popup renders on EDT
+        val available = WebArtifacts.read {
+            WebArtifacts.all(project).filter { it.name !in existing }.map { it.name to it.artifactType.icon }
+        }
+        if (available.isEmpty()) {
+            com.intellij.openapi.ui.Messages.showInfoMessage(component,
+                "There are no web artifacts to add. Create one in File | Project Structure | Artifacts, or add an External Source.",
+                "Deploy Artifact")
+            return
+        }
+        JBPopupFactory.getInstance().createPopupChooserBuilder(available)
+            .setTitle("Artifact to Deploy")
+            .setRenderer(SimpleListCellRenderer.create<Pair<String, Icon>> { label, value, _ ->
+                label.text = value.first
+                label.icon = value.second
+            })
+            .setItemChosenCallback { (name, icon) ->
+                listModel.add(Item(name, TomcatDeployment.defaultContextPath(name), icon))
+                list.selectedIndex = listModel.size - 1
+                WebArtifacts.find(project, name)?.let {
+                    BuildArtifactsBeforeRunTaskProvider.setBuildArtifactBeforeRunOption(component, project, it, true)
+                }
+                fireEditorStateChanged()
+            }
+            .createPopup()
+            .show(point)
+    }
+
+    private fun chooseExternalSource() {
+        val descriptor = com.intellij.openapi.fileChooser.FileChooserDescriptor(true, true, false, false, false, false)
+            .withTitle("Select External Source")
+            .withDescription("A .war file or an exploded web application directory")
+            .withFileFilter { it.isDirectory || it.extension.equals("war", ignoreCase = true) }
+        val file = com.intellij.openapi.fileChooser.FileChooser.chooseFile(descriptor, project, null) ?: return
+        val deployment = TomcatDeployment.external(file.path)
+        if (listModel.items.any { it.externalPath == deployment.externalPath }) return
+        listModel.add(Item(deployment.artifactName, deployment.contextPath, externalIcon(deployment.externalPath!!), deployment.externalPath))
+        list.selectedIndex = listModel.size - 1
+        fireEditorStateChanged()
+    }
+
+    private fun externalIcon(path: String): Icon =
+        if (path.endsWith(".war", ignoreCase = true)) com.intellij.icons.AllIcons.FileTypes.Archive else com.intellij.icons.AllIcons.Nodes.Folder
+
     override fun resetEditorFrom(c: TomcatRunConfiguration) {
-        listModel.replaceAll(c.deployments.map { Item(it.artifactName, it.contextPath, iconOf(it.artifactName)) })
+        listModel.replaceAll(c.deployments.map {
+            if (it.externalPath != null) Item(it.artifactName, it.contextPath, externalIcon(it.externalPath), it.externalPath)
+            else Item(it.artifactName, it.contextPath, iconOf(it.artifactName))
+        })
         if (listModel.size > 0) list.selectedIndex = 0 else contextField.isEnabled = false
     }
 
     override fun applyEditorTo(c: TomcatRunConfiguration) {
-        c.deployments = listModel.items.map { TomcatDeployment(it.artifactName, TomcatContexts.normalize(it.contextPath)) }
+        c.deployments = listModel.items.map { TomcatDeployment(it.artifactName, TomcatContexts.normalize(it.contextPath), it.externalPath) }
     }
 }
 

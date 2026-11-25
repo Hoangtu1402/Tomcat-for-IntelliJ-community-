@@ -42,6 +42,10 @@ class TomcatCommandLineState(environment: ExecutionEnvironment, private val conf
         resolved = ReadAction.compute<List<ResolvedDeployment>, ExecutionException> {
             val manager = ArtifactManager.getInstance(project)
             configuration.deployments.map { deployment ->
+                deployment.externalPath?.let { path ->
+                    if (!java.io.File(path).exists()) throw ExecutionException("External source '$path' does not exist")
+                    return@map ResolvedDeployment(TomcatContexts.normalize(deployment.contextPath), path, deployment.artifactName, external = true)
+                }
                 val artifact = manager.findArtifact(deployment.artifactName)
                     ?: throw ExecutionException("Artifact '${deployment.artifactName}' does not exist")
                 val output = artifact.outputFilePath

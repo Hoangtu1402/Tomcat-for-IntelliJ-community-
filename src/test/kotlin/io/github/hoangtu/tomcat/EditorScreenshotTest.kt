@@ -18,7 +18,7 @@ class EditorScreenshotTest : BasePlatformTestCase() {
     fun testRenderEditors() {
         if (System.getProperty("screenshots") != "true") return
         val config = TomcatConfigurationType.getInstance().configurationFactories.single().createTemplateConfiguration(project) as TomcatRunConfiguration
-        config.deployments = listOf(TomcatDeployment("shop:war exploded", "/shop"), TomcatDeployment("admin:war exploded", "/admin"))
+        config.deployments = listOf(TomcatDeployment("shop:war exploded", "/shop"), TomcatDeployment("admin:war exploded", "/admin"), TomcatDeployment.external("/opt/apps/legacy.war"))
         val editors = mapOf(
             "server" to TomcatServerSettingsEditor(project),
             "deployment" to TomcatDeploymentSettingsEditor(project),

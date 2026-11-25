@@ -36,7 +36,7 @@ object TomcatContexts {
 }
 
 /** A deployment resolved to a file system location (exploded directory or .war file). */
-data class ResolvedDeployment(val contextPath: String, val docBase: String, val artifactName: String)
+data class ResolvedDeployment(val contextPath: String, val docBase: String, val artifactName: String, val external: Boolean = false)
 
 /**
  * Creates the per-run-configuration CATALINA_BASE directory (like IntelliJ IDEA Ultimate does):

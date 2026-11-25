@@ -46,9 +46,22 @@ enum class UpdatePolicy(val id: String, val presentableName: String) {
     }
 }
 
-/** An artifact deployed to Tomcat and the context path it is deployed under. */
-data class TomcatDeployment(val artifactName: String, val contextPath: String) {
+/**
+ * Something deployed to Tomcat and the context path it is deployed under: either an artifact of the project, or an
+ * "External Source" (a .war file or an exploded web application directory outside the project, as in Ultimate).
+ * For an external source [artifactName] is its display name (the file name) and [externalPath] its location.
+ */
+data class TomcatDeployment(val artifactName: String, val contextPath: String, val externalPath: String? = null) {
+    val isExternal: Boolean get() = externalPath != null
+
     companion object {
+        /** "/path/shop.war" -> deployment "shop.war" with context "/shop". */
+        fun external(path: String): TomcatDeployment {
+            val normalized = com.intellij.openapi.util.io.FileUtil.toSystemIndependentName(path).trimEnd('/')
+            val fileName = normalized.substringAfterLast('/')
+            return TomcatDeployment(fileName, "/" + fileName.removeSuffix(".war").replace(Regex("[^A-Za-z0-9._-]"), "_"), normalized)
+        }
+
         /** Same default as IntelliJ IDEA Ultimate: "demo:war exploded" -> "/demo_war_exploded". */
         fun defaultContextPath(artifactName: String): String = "/" + artifactName.replace(Regex("[^A-Za-z0-9._-]"), "_")
     }
@@ -139,6 +152,11 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
             if (port != 0 && (port == httpPort || port == jmxPort)) throw RuntimeConfigurationError("$name port conflicts with another port")
         }
         for (deployment in deployments) {
+            val external = deployment.externalPath
+            if (external != null) {
+                if (!java.io.File(external).exists()) throw RuntimeConfigurationError("External source '$external' does not exist")
+                continue
+            }
             if (WebArtifacts.find(project, deployment.artifactName) == null) {
                 throw RuntimeConfigurationError("Artifact '${deployment.artifactName}' does not exist")
             }
@@ -183,10 +201,20 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
         frameDeactivationPolicy = UpdatePolicy.byId(JDOMExternalizerUtil.readField(element, "FRAME_DEACTIVATION_UPDATING_POLICY"), UpdatePolicy.NOTHING)
         vmOptions = JDOMExternalizerUtil.readField(element, "COMMON_VM_ARGUMENTS") ?: ""
 
-        deployments = element.getChild("deployment")?.getChildren("artifact")?.mapNotNull { artifact ->
-            val artifactName = artifact.getAttributeValue("name") ?: return@mapNotNull null
-            val ctx = artifact.getChild("settings")?.let { JDOMExternalizerUtil.readField(it, "CONTEXT_PATH") }
-            TomcatDeployment(artifactName, ctx ?: TomcatDeployment.defaultContextPath(artifactName))
+        // <artifact name="..."> = project artifact, <file path="..."> = external source (same tags as Ultimate)
+        deployments = element.getChild("deployment")?.children?.mapNotNull { child ->
+            val ctx = child.getChild("settings")?.let { JDOMExternalizerUtil.readField(it, "CONTEXT_PATH") }
+            when (child.name) {
+                "artifact" -> {
+                    val artifactName = child.getAttributeValue("name") ?: return@mapNotNull null
+                    TomcatDeployment(artifactName, ctx ?: TomcatDeployment.defaultContextPath(artifactName))
+                }
+                "file" -> {
+                    val path = child.getAttributeValue("path") ?: return@mapNotNull null
+                    TomcatDeployment.external(path).let { if (ctx != null) it.copy(contextPath = ctx) else it }
+                }
+                else -> null
+            }
         } ?: emptyList()
 
         val own = element.getChild(OWN_TAG)
@@ -226,7 +254,9 @@ class TomcatRunConfiguration(project: Project, factory: ConfigurationFactory, na
             for (d in deployments) {
                 val settings = Element("settings")
                 JDOMExternalizerUtil.writeField(settings, "CONTEXT_PATH", d.contextPath)
-                deploymentTag.addContent(Element("artifact").setAttribute("name", d.artifactName).addContent(settings))
+                val tag = if (d.externalPath != null) Element("file").setAttribute("path", d.externalPath)
+                else Element("artifact").setAttribute("name", d.artifactName)
+                deploymentTag.addContent(tag.addContent(settings))
             }
             element.addContent(deploymentTag)
         }

@@ -96,7 +96,7 @@ class TomcatRunConfigurationTest : BasePlatformTestCase() {
         source.preserveSessions = true
         source.clearLogsOnStart = false
         source.logDirectory = "/tmp/tomcat-logs"
-        source.deployments = listOf(TomcatDeployment("x:war exploded", "/x"))
+        source.deployments = listOf(TomcatDeployment("x:war exploded", "/x"), TomcatDeployment.external("/opt/apps/legacy.war"))
         source.envs = com.intellij.execution.configuration.EnvironmentVariablesData.create(mapOf("A" to "1"), true)
 
         val target = newConfiguration()
@@ -225,6 +225,32 @@ class TomcatRunConfigurationTest : BasePlatformTestCase() {
         assertTrue(prepared.warnings.toString(), prepared.warnings.any { it.contains("Cannot use log directory") })
         // logging.properties is left untouched (default ${'$'}{catalina.base}/logs)
         assertTrue(java.nio.file.Files.readString(prepared.base.resolve("conf/logging.properties")).contains("\${'$'}{catalina.base}/logs"))
+    }
+
+    /** External sources (a .war file or a directory outside the project) are stored like in Ultimate: <file path="...">. */
+    fun testExternalSourcesRoundTrip() {
+        val xml = """
+            <configuration APPLICATION_SERVER_NAME="Tomcat">
+              <deployment>
+                <artifact name="shop:war exploded"><settings><option name="CONTEXT_PATH" value="/shop" /></settings></artifact>
+                <file path="/opt/apps/legacy.war"><settings><option name="CONTEXT_PATH" value="/old" /></settings></file>
+                <file path="/opt/apps/static-site" />
+              </deployment>
+            </configuration>
+        """.trimIndent()
+        val configuration = newConfiguration()
+        configuration.readExternal(JDOMUtil.load(xml))
+        assertEquals(listOf(
+            TomcatDeployment("shop:war exploded", "/shop"),
+            TomcatDeployment("legacy.war", "/old", "/opt/apps/legacy.war"),
+            TomcatDeployment("static-site", "/static-site", "/opt/apps/static-site"),
+        ), configuration.deployments)
+
+        val element = Element("configuration")
+        configuration.writeExternal(element)
+        assertEquals("/opt/apps/legacy.war", element.getChild("deployment").getChildren("file")[0].getAttributeValue("path"))
+        assertEquals(configuration.deployments, newConfiguration().apply { readExternal(element) }.deployments)
+        assertEquals("/legacy", TomcatDeployment.external("C:\\apps\\legacy.war").contextPath)
     }
 
     fun testContextNames() {

@@ -47,7 +47,7 @@ Dùng **Tomcat 9.0** nếu ứng dụng dùng `javax.servlet`, **Tomcat 10.1** n
    - Dự án khác: *File › Project Structure › Artifacts* › `+` › *Web Application: Exploded* › *From module '…'*.
 3. **Run configuration**: *Run › Edit Configurations…* › `+` › **Tomcat Server › Local**.
    - Tab *Server*: chọn Tomcat, cổng HTTP, URL mở trình duyệt, hành động khi *Update*.
-   - Tab *Deployment*: `+` để thêm artifact và đặt context path (mặc định `/ten_artifact`). Bước *Build artifact* trước khi chạy được tự thêm.
+   - Tab *Deployment*: `+` › **Artifact…** để thêm artifact của project (bước *Build artifact* trước khi chạy được tự thêm), hoặc `+` › **External Source…** để deploy một file `.war` hay một thư mục webapp đã giải nén nằm ngoài project (không build, deploy nguyên trạng). Chọn từng dòng để đặt *Application context* (mặc định `/ten_artifact`, với External Source là `/ten_file`).
 4. Bấm **Run** hoặc **Debug**. Khi đang chạy, sửa code rồi bấm **Ctrl+F10** (*Run › Update Tomcat Application*) để cập nhật mà không cần khởi động lại.
    - Nếu cấu hình deploy nhiều artifact, một popup hiện ra: chọn *All applications*, *Applications containing module '…'* (module của file đang mở, được chọn sẵn) hoặc một artifact cụ thể, rồi chọn hành động (Update resources / Update classes and resources / Redeploy).
    - *Run › Update Tomcat Application…* (**Ctrl+Alt+F10**) luôn hỏi, kể cả khi chỉ có một artifact.

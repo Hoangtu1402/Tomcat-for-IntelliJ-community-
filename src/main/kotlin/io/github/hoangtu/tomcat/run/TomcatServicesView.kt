@@ -236,19 +236,32 @@ class TomcatDeploymentNode(val server: TomcatServerNode, val deployment: TomcatD
     private fun instance(): RunningTomcat? = TomcatInstances.getInstance(project).findByConfiguration(configuration)
 
     private fun resolved(instance: RunningTomcat): ResolvedDeployment? =
-        instance.deployments.firstOrNull { it.artifactName == deployment.artifactName && it.contextPath == TomcatContexts.normalize(deployment.contextPath) }
+        instance.deployments.firstOrNull {
+            it.contextPath == TomcatContexts.normalize(deployment.contextPath) &&
+                (if (deployment.externalPath != null) it.external && it.docBase == deployment.externalPath else it.artifactName == deployment.artifactName)
+        }
 
     /** Snapshot of the artifact taken inside a read action (the Services tree renders on EDT without one). */
     private class ArtifactInfo(val icon: Icon, val typeName: String, val outputFilePath: String?)
 
-    private fun artifact(): ArtifactInfo? = WebArtifacts.read {
+    /** Artifact info, or info about the external source; null when the artifact / file does not exist. */
+    private fun artifact(): ArtifactInfo? {
+        deployment.externalPath?.let { path ->
+            if (!java.io.File(path).exists()) return null
+            val icon = if (path.endsWith(".war", ignoreCase = true)) AllIcons.FileTypes.Archive else AllIcons.Nodes.Folder
+            return ArtifactInfo(icon, "External Source", path)
+        }
+        return projectArtifact()
+    }
+
+    private fun projectArtifact(): ArtifactInfo? = WebArtifacts.read {
         ArtifactManager.getInstance(project).findArtifact(deployment.artifactName)?.let {
             ArtifactInfo(it.artifactType.icon, it.artifactType.presentableName, it.outputFilePath)
         }
     }
 
     fun descriptor(): ServiceViewDescriptor = object : ServiceViewDescriptor {
-        override fun getId(): String = "tomcat:" + server.settings.uniqueID + ":" + deployment.artifactName + ":" + deployment.contextPath
+        override fun getId(): String = "tomcat:" + server.settings.uniqueID + ":" + (deployment.externalPath ?: deployment.artifactName) + ":" + deployment.contextPath
 
         override fun getPresentation(): ItemPresentation {
             val artifact = artifact()
@@ -258,7 +271,8 @@ class TomcatDeploymentNode(val server: TomcatServerNode, val deployment: TomcatD
             return PresentationData(deployment.artifactName, deployment.contextPath, if (deployed) ExecutionUtil.getLiveIndicator(baseIcon) else baseIcon, null).apply {
                 addText(deployment.artifactName, if (artifact == null) SimpleTextAttributes.ERROR_ATTRIBUTES else SimpleTextAttributes.REGULAR_ATTRIBUTES)
                 addText("  ${TomcatContexts.normalize(deployment.contextPath)}", SimpleTextAttributes.GRAY_ATTRIBUTES)
-                if (artifact == null) addText("  [artifact not found]", SimpleTextAttributes.ERROR_ATTRIBUTES)
+                if (artifact == null) addText(if (deployment.isExternal) "  [file not found]" else "  [artifact not found]", SimpleTextAttributes.ERROR_ATTRIBUTES)
+                else if (deployment.isExternal && !deployed) addText("  [external]", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 else if (deployed) addText("  [deployed]", SimpleTextAttributes.GRAY_ITALIC_ATTRIBUTES)
             }
         }
@@ -271,8 +285,10 @@ class TomcatDeploymentNode(val server: TomcatServerNode, val deployment: TomcatD
             val instance = instance()
             val url = contextUrl(configuration, TomcatContexts.normalize(deployment.contextPath))
             return panel {
-                row("Artifact:") { label(deployment.artifactName + (artifact?.let { "  (${it.typeName})" } ?: "  — not found")) }
-                row("Output:") { label(artifact?.outputFilePath ?: "-") }
+                row(if (deployment.isExternal) "External source:" else "Artifact:") {
+                    label(deployment.artifactName + (artifact?.let { "  (${it.typeName})" } ?: "  — not found"))
+                }
+                row(if (deployment.isExternal) "Path:" else "Output:") { label(artifact?.outputFilePath ?: deployment.externalPath ?: "-") }
                 row("Context:") { label(TomcatContexts.normalize(deployment.contextPath)) }
                 row("URL:") { if (instance != null) browserLink(url, url) else label(url) }
                 row {
@@ -313,10 +329,10 @@ class TomcatDeploymentNode(val server: TomcatServerNode, val deployment: TomcatD
             override fun actionPerformed(e: AnActionEvent) =
                 BrowserUtil.browse(contextUrl(configuration, TomcatContexts.normalize(deployment.contextPath)))
         })
-        add(object : DumbAwareAction("Build Artifact", "Build '${deployment.artifactName}'", AllIcons.Actions.Compile) {
+        if (!deployment.isExternal) add(object : DumbAwareAction("Build Artifact", "Build '${deployment.artifactName}'", AllIcons.Actions.Compile) {
             override fun getActionUpdateThread() = ActionUpdateThread.BGT
             override fun update(e: AnActionEvent) {
-                e.presentation.isEnabled = artifact() != null
+                e.presentation.isEnabled = projectArtifact() != null
             }
             override fun actionPerformed(e: AnActionEvent) {
                 WebArtifacts.find(project, deployment.artifactName)?.let { ProjectTaskManager.getInstance(project).build(it) }

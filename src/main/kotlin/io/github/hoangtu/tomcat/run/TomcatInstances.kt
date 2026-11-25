@@ -111,10 +111,14 @@ class TomcatInstances(private val project: Project) : com.intellij.openapi.Dispo
 
         val artifacts: List<Artifact> = ReadAction.compute<List<Artifact>, RuntimeException> {
             val manager = ArtifactManager.getInstance(project)
-            deployments.mapNotNull { manager.findArtifact(it.artifactName) }.distinct()
+            deployments.filter { !it.external }.mapNotNull { manager.findArtifact(it.artifactName) }.distinct()
         }
         if (artifacts.isEmpty()) {
+            // only external sources: nothing to build, the files were changed outside the IDE -> reload them
             instance.updating.set(false)
+            if (policy != UpdatePolicy.UPDATE_RESOURCES && !instance.processHandler.isProcessTerminated) {
+                ApplicationManager.getApplication().executeOnPooledThread { reloadContexts(instance, deployments, silent) }
+            }
             return
         }
         val stampBefore = classesStamp(deployments)
@@ -126,7 +130,8 @@ class TomcatInstances(private val project: Project) : com.intellij.openapi.Dispo
                     val reload = when (policy) {
                         UpdatePolicy.REDEPLOY -> true
                         // in a debug session HotSwap reloads the changed classes without redeploying
-                        UpdatePolicy.UPDATE_CLASSES_AND_RESOURCES -> classesChanged && !instance.isDebug
+                        // external sources are not built by the IDE: reload them as well
+                        UpdatePolicy.UPDATE_CLASSES_AND_RESOURCES -> (classesChanged || deployments.any { it.external }) && !instance.isDebug
                         else -> false
                     }
                     if (reload && !instance.processHandler.isProcessTerminated) {

@@ -93,7 +93,19 @@ class TomcatLaunchTest : JavaProjectTestCase() {
         configuration.serverName = serverName
         configuration.httpPort = freePort()
         configuration.jmxPort = freePort()
-        configuration.deployments = listOf(TomcatDeployment("app:war exploded", "/app"), TomcatDeployment("other:war exploded", "/other"))
+        // an "External Source": a .war file that is not an artifact of the project
+        val externalWar = temp.resolve("external/legacy.war")
+        Files.createDirectories(externalWar.parent)
+        java.util.zip.ZipOutputStream(Files.newOutputStream(externalWar)).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("index.html"))
+            zip.write("from external war".toByteArray())
+            zip.closeEntry()
+        }
+        configuration.deployments = listOf(
+            TomcatDeployment("app:war exploded", "/app"),
+            TomcatDeployment("other:war exploded", "/other"),
+            TomcatDeployment.external(externalWar.toString()),
+        )
         // custom log directory, with logs of a "previous run" that must be removed on start
         val logDir = temp.resolve("tomcat-logs")
         Files.createDirectories(logDir)
@@ -136,6 +148,7 @@ class TomcatLaunchTest : JavaProjectTestCase() {
             assertTrue(Files.readString(catalinaLog!!).contains("Server startup in"))
             assertTrue(Files.readString(TomcatCatalinaBase.directoryFor(configuration).resolve("conf/Catalina/localhost/app.xml")).contains("<Manager pathname=\"\"/>"))
 
+            assertEquals("from external war", get("http://localhost:${configuration.httpPort}/legacy/index.html")?.second?.trim())
             assertEquals("other", get("http://localhost:${configuration.httpPort}/other/index.html")?.second?.trim())
             val base = TomcatCatalinaBase.directoryFor(configuration)
             assertTrue(Files.isRegularFile(base.resolve("conf/Catalina/localhost/app.xml")))
